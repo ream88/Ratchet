@@ -42,6 +42,12 @@ struct GitService {
         }
     }
 
+    /// SHAs reachable from `branch` but not from `base` — i.e. the commits `branch` is ahead by.
+    nonisolated func commitsAhead(branch: String, base: String, limit: Int = 2000) async throws -> [String] {
+        let output = try await run(["rev-list", "\(base)..\(branch)", "-n", String(limit)])
+        return output.split(separator: "\n", omittingEmptySubsequences: true).map(String.init)
+    }
+
     /// The name of the currently checked-out branch, or nil for a detached HEAD.
     nonisolated func currentBranch() async throws -> String? {
         let name = try await run(["rev-parse", "--abbrev-ref", "HEAD"])

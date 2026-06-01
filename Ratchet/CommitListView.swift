@@ -64,25 +64,48 @@ struct CommitListView: View {
             ContentUnavailableView("No Commits", systemImage: "tray",
                                    description: Text("This branch has no commits to review."))
         } else {
-            List(selection: Binding(
-                get: { document.selectedCommit },
-                set: { commit in
-                    if let commit { Task { await document.selectCommit(commit) } }
+            VStack(spacing: 0) {
+                if let base = document.baseBranchName {
+                    aheadHeader(base: base)
+                    Divider()
                 }
-            )) {
-                ForEach(document.commits) { commit in
-                    let badge = badges.badges[commit.id]
-                    CommitRow(
-                        commit: commit,
-                        isFullyReviewed: badge?.fullyReviewed == true,
-                        hasUnresolvedComments: badge?.hasComments == true
-                    )
-                    .tag(commit)
-                    .listRowInsets(EdgeInsets(top: 5, leading: 10, bottom: 5, trailing: 10))
+                List(selection: Binding(
+                    get: { document.selectedCommit },
+                    set: { commit in
+                        if let commit { Task { await document.selectCommit(commit) } }
+                    }
+                )) {
+                    ForEach(document.commits) { commit in
+                        let badge = badges.badges[commit.id]
+                        // Dim commits already in the base branch so the unmerged ones stand out.
+                        let merged = document.baseBranchName != nil
+                            && !document.commitsAheadOfBase.contains(commit.id)
+                        CommitRow(
+                            commit: commit,
+                            isFullyReviewed: badge?.fullyReviewed == true,
+                            hasUnresolvedComments: badge?.hasComments == true
+                        )
+                        .opacity(merged ? 0.45 : 1)
+                        .tag(commit)
+                        .listRowInsets(EdgeInsets(top: 5, leading: 10, bottom: 5, trailing: 10))
+                    }
                 }
+                .listStyle(.inset)
             }
-            .listStyle(.inset)
         }
+    }
+
+    private func aheadHeader(base: String) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: "arrow.up.circle.fill")
+                .foregroundStyle(.blue)
+            Text("\(document.commitsAheadOfBase.count) ahead of \(base)")
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.secondary)
+            Spacer()
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
     }
 }
 

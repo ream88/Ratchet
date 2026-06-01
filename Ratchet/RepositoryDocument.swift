@@ -44,6 +44,12 @@ final class RepositoryDocument: ObservableObject {
     @Published var errorMessage: String?
     @Published private(set) var isValidRepository = false
 
+    /// The base branch the selected branch is compared against (e.g. `main`), if found.
+    @Published private(set) var baseBranchName: String?
+
+    /// SHAs of commits in the selected branch that are ahead of (not yet in) the base branch.
+    @Published private(set) var commitsAheadOfBase: Set<String> = []
+
     /// Each loaded commit's parsed hunks, cached as commits are opened so the sidebar can
     /// show review/comment badges without re-diffing every commit up front.
     @Published private(set) var hunksByCommit: [String: [DiffHunk]] = [:]
@@ -110,10 +116,32 @@ final class RepositoryDocument: ObservableObject {
         defer { isLoadingCommits = false }
         do {
             commits = try await git.commits(branch: branch)
+            await loadAheadOfBase(branch: branch)
         } catch {
             commits = []
             errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }
+    }
+
+    /// Computes which of the branch's commits aren't yet in the base branch (e.g. `main`).
+    /// No-ops when viewing the base branch itself or when no base branch is present.
+    private func loadAheadOfBase(branch: String) async {
+        guard let base = detectBaseBranch(for: branch) else {
+            baseBranchName = nil
+            commitsAheadOfBase = []
+            return
+        }
+        baseBranchName = base
+        let ahead = (try? await git.commitsAhead(branch: branch, base: base)) ?? []
+        commitsAheadOfBase = Set(ahead)
+    }
+
+    /// Picks a sensible base branch to compare against — `main`/`master` (local, then remote).
+    /// Returns nil when viewing the trunk itself (nothing to be ahead of).
+    private func detectBaseBranch(for branch: String) -> String? {
+        if branch == "main" || branch == "master" { return nil }
+        let names = Set(branches.map(\.name))
+        return ["main", "master", "origin/main", "origin/master"].first { names.contains($0) }
     }
 
     func selectCommit(_ commit: GitCommit) async {
