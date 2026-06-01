@@ -140,6 +140,13 @@ struct DiffFile: Identifiable {
 
 // MARK: - Review comments
 
+/// Cached per-commit indicators for the sidebar, persisted by git commit SHA so they show
+/// immediately for every commit — not just ones opened this session.
+struct CommitBadge {
+    var fullyReviewed: Bool
+    var hasComments: Bool
+}
+
 struct ReviewComment: Codable, Identifiable {
     let id: UUID
     let repositoryPath: String

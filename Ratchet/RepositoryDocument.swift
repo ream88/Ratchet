@@ -19,12 +19,6 @@ import Combine
 //   - Syntax highlighting inside diff hunks.
 //   - Toggle to show only commented / only uncommented hunks.
 
-/// Cached per-commit indicators for the sidebar.
-struct CommitBadge {
-    var fullyReviewed: Bool
-    var hasComments: Bool
-}
-
 /// Holds the sidebar's per-commit badges on a *separate* observable object so updating them
 /// (which happens on every comment keystroke) re-renders only the sidebar — not the diff view
 /// and its hunks, which observe `RepositoryDocument` itself.
@@ -78,6 +72,10 @@ final class RepositoryDocument: ObservableObject {
         do {
             try await git.validateRepository()
             isValidRepository = true
+
+            // Preload persisted badges so every commit shows its status immediately,
+            // not only after it's been opened this session.
+            badges.badges = store.commitBadges(repositoryPath: repositoryPath)
 
             async let branchesTask = git.branches()
             async let currentTask = git.currentBranch()
@@ -242,10 +240,13 @@ final class RepositoryDocument: ObservableObject {
 
     // MARK: Sidebar badges
 
-    /// Recomputes the cached badge for a commit. Called only when that commit's review or
-    /// comment state changes — never on a blanket per-keystroke sidebar re-render.
+    /// Recomputes the cached badge for a commit and persists it (keyed by SHA) so it survives
+    /// across launches. Only runs when the commit's diff is loaded; otherwise the preloaded,
+    /// persisted badge stays as-is.
     func updateBadge(forCommitID id: String) {
-        badges.badges[id] = computeBadge(forCommitID: id)
+        guard let badge = computeBadge(forCommitID: id) else { return }
+        badges.badges[id] = badge
+        store.setCommitBadge(badge, repositoryPath: repositoryPath, commitSHA: id)
     }
 
     private func refreshSelectedCommitBadge() {

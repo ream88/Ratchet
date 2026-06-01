@@ -48,6 +48,29 @@ final class StoredReviewComment {
     }
 }
 
+/// Persisted per-commit sidebar badge, keyed by `repositoryPath + commitSHA`. A commit's
+/// content is immutable, so this stays valid and lets the sidebar show status for every
+/// commit immediately — without re-diffing each one.
+@Model
+final class StoredCommitBadge {
+    @Attribute(.unique) var key: String
+    var repositoryPath: String
+    var commitSHA: String
+    var fullyReviewed: Bool
+    var hasComments: Bool
+    var updatedAt: Date
+
+    init(key: String, repositoryPath: String, commitSHA: String,
+         fullyReviewed: Bool, hasComments: Bool, updatedAt: Date) {
+        self.key = key
+        self.repositoryPath = repositoryPath
+        self.commitSHA = commitSHA
+        self.fullyReviewed = fullyReviewed
+        self.hasComments = hasComments
+        self.updatedAt = updatedAt
+    }
+}
+
 @MainActor
 final class ReviewStore: ObservableObject {
     static let shared = ReviewStore()
@@ -62,6 +85,9 @@ final class ReviewStore: ObservableObject {
     /// Cache of the SwiftData model objects by key, so writes don't need a fetch.
     private var storedByKey: [String: StoredReviewComment] = [:]
 
+    /// Cache of persisted commit badges by `repositoryPath + commitSHA`.
+    private var storedBadgeByKey: [String: StoredCommitBadge] = [:]
+
     /// Retained for the store's lifetime — if the container deallocates, its context and all
     /// model instances are invalidated ("destroyed by ModelContext.reset").
     private let modelContainer: ModelContainer
@@ -70,12 +96,13 @@ final class ReviewStore: ObservableObject {
 
     init(inMemory: Bool = false) {
         let configuration = ModelConfiguration(isStoredInMemoryOnly: inMemory)
+        let schema = Schema([StoredReviewComment.self, StoredCommitBadge.self])
         do {
-            modelContainer = try ModelContainer(for: StoredReviewComment.self, configurations: configuration)
+            modelContainer = try ModelContainer(for: schema, configurations: configuration)
         } catch {
             // Fall back to an in-memory store so the app still runs if the file store fails.
             modelContainer = try! ModelContainer(
-                for: StoredReviewComment.self,
+                for: schema,
                 configurations: ModelConfiguration(isStoredInMemoryOnly: true)
             )
         }
@@ -141,6 +168,44 @@ final class ReviewStore: ObservableObject {
             $0.repositoryPath == repositoryPath
                 && !$0.comment.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
+    }
+
+    // MARK: Commit badges
+
+    private static func badgeKey(_ repositoryPath: String, _ commitSHA: String) -> String {
+        repositoryPath + "\u{1}" + commitSHA
+    }
+
+    /// All persisted commit badges for a repository, keyed by commit SHA, for the sidebar.
+    func commitBadges(repositoryPath: String) -> [String: CommitBadge] {
+        var result: [String: CommitBadge] = [:]
+        for model in storedBadgeByKey.values where model.repositoryPath == repositoryPath {
+            result[model.commitSHA] = CommitBadge(fullyReviewed: model.fullyReviewed,
+                                                  hasComments: model.hasComments)
+        }
+        return result
+    }
+
+    /// Persists a commit's sidebar badge so it shows immediately on future launches.
+    func setCommitBadge(_ badge: CommitBadge, repositoryPath: String, commitSHA: String) {
+        let key = Self.badgeKey(repositoryPath, commitSHA)
+        if let model = storedBadgeByKey[key] {
+            model.fullyReviewed = badge.fullyReviewed
+            model.hasComments = badge.hasComments
+            model.updatedAt = Date()
+        } else {
+            let model = StoredCommitBadge(
+                key: key,
+                repositoryPath: repositoryPath,
+                commitSHA: commitSHA,
+                fullyReviewed: badge.fullyReviewed,
+                hasComments: badge.hasComments,
+                updatedAt: Date()
+            )
+            modelContext.insert(model)
+            storedBadgeByKey[key] = model
+        }
+        scheduleSave()
     }
 
     // MARK: Mutation
@@ -223,10 +288,16 @@ final class ReviewStore: ObservableObject {
     }
 
     private func load() {
-        guard let stored = try? modelContext.fetch(FetchDescriptor<StoredReviewComment>()) else { return }
-        for model in stored {
-            storedByKey[model.key] = model
-            records[model.key] = ReviewComment(model)
+        if let stored = try? modelContext.fetch(FetchDescriptor<StoredReviewComment>()) {
+            for model in stored {
+                storedByKey[model.key] = model
+                records[model.key] = ReviewComment(model)
+            }
+        }
+        if let badges = try? modelContext.fetch(FetchDescriptor<StoredCommitBadge>()) {
+            for model in badges {
+                storedBadgeByKey[model.key] = model
+            }
         }
     }
 
