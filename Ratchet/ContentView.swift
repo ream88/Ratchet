@@ -2,23 +2,42 @@
 //  ContentView.swift
 //  Ratchet
 //
-//  Created by Mario Uher on 01.06.26.
+//  Three-column layout: branch + commit list, diff/review area, comment summary.
 //
 
 import SwiftUI
 
 struct ContentView: View {
-    var body: some View {
-        VStack {
-            Image(systemName: "globe")
-                .imageScale(.large)
-                .foregroundStyle(.tint)
-            Text("Hello, world!")
-        }
-        .padding()
-    }
-}
+    @StateObject private var document: RepositoryDocument
 
-#Preview {
-    ContentView()
+    init(repositoryURL: URL) {
+        _document = StateObject(wrappedValue: RepositoryDocument(repositoryURL: repositoryURL))
+    }
+
+    var body: some View {
+        NavigationSplitView {
+            CommitListView(document: document)
+                .navigationSplitViewColumnWidth(min: 260, ideal: 300, max: 420)
+        } detail: {
+            DiffReviewView(document: document)
+        }
+        .task {
+            // Only the first appearance should kick off loading.
+            if document.commits.isEmpty && document.errorMessage == nil {
+                await document.load()
+            }
+        }
+        .alert(
+            "Git Error",
+            isPresented: Binding(
+                get: { document.errorMessage != nil },
+                set: { if !$0 { document.errorMessage = nil } }
+            ),
+            presenting: document.errorMessage
+        ) { _ in
+            Button("OK", role: .cancel) { document.errorMessage = nil }
+        } message: { message in
+            Text(message)
+        }
+    }
 }
