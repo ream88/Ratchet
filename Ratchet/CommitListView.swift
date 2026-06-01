@@ -37,11 +37,6 @@ struct CommitListView: View {
             ContentUnavailableView("No Commits", systemImage: "tray",
                                    description: Text("This branch has no commits to review."))
         } else {
-            VStack(spacing: 0) {
-                if let base = document.baseBranchName {
-                    aheadHeader(base: base)
-                    Divider()
-                }
                 List(selection: Binding(
                     get: { document.selectedCommit },
                     set: { commit in
@@ -95,21 +90,7 @@ struct CommitListView: View {
                     .opacity(0)
                     .accessibilityHidden(true)
                 }
-            }
         }
-    }
-
-    private func aheadHeader(base: String) -> some View {
-        HStack(spacing: 6) {
-            Image(systemName: "arrow.up.circle.fill")
-                .foregroundStyle(.blue)
-            Text("\(document.commitsAheadOfBase.count) ahead of \(base)")
-                .font(.caption.weight(.medium))
-                .foregroundStyle(.secondary)
-            Spacer()
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
     }
 }
 
