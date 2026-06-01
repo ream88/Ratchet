@@ -9,12 +9,13 @@ import SwiftUI
 
 struct CommitListView: View {
     @ObservedObject var document: RepositoryDocument
-    // Observed so review-state changes refresh the per-commit "reviewed" badge.
-    @ObservedObject private var store: ReviewStore
+    // Observe only the lightweight badge cache — not the whole review store — so typing a
+    // comment doesn't re-render or recompute the commit list on every keystroke.
+    @ObservedObject private var badges: CommitBadgeStore
 
     init(document: RepositoryDocument) {
         self.document = document
-        self.store = document.store
+        self.badges = document.badges
     }
 
     var body: some View {
@@ -70,10 +71,11 @@ struct CommitListView: View {
                 }
             )) {
                 ForEach(document.commits) { commit in
+                    let badge = badges.badges[commit.id]
                     CommitRow(
                         commit: commit,
-                        isFullyReviewed: document.isFullyReviewed(commit) == true,
-                        hasUnresolvedComments: document.hasUnresolvedComments(commit)
+                        isFullyReviewed: badge?.fullyReviewed == true,
+                        hasUnresolvedComments: badge?.hasComments == true
                     )
                     .tag(commit)
                     .listRowInsets(EdgeInsets(top: 5, leading: 10, bottom: 5, trailing: 10))
@@ -115,32 +117,20 @@ private struct CommitRow: View {
 
             Spacer(minLength: 0)
 
-            VStack(alignment: .trailing, spacing: 4) {
+            HStack(spacing: 6) {
                 if hasUnresolvedComments {
                     Image(systemName: "exclamationmark.bubble.fill")
-                        .font(.caption)
                         .foregroundStyle(.orange)
                         .help("Has unresolved review comments")
                 }
                 if isFullyReviewed {
-                    reviewedBadge
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(.green)
+                        .help("All chunks in this commit are reviewed")
                 }
             }
+            .font(.callout)
         }
         .padding(.vertical, 3)
-    }
-
-    private var reviewedBadge: some View {
-        HStack(spacing: 3) {
-            Image(systemName: "checkmark.circle.fill")
-            Text("Reviewed")
-        }
-        .font(.caption2.weight(.semibold))
-        .foregroundStyle(.green)
-        .padding(.horizontal, 7)
-        .padding(.vertical, 3)
-        .background(Color.green.opacity(0.15), in: Capsule())
-        .help("All chunks in this commit are reviewed")
-        .fixedSize()
     }
 }
