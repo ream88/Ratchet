@@ -33,6 +33,7 @@ final class RepositoryDocument: ObservableObject {
     let repositoryURL: URL
     let store: ReviewStore
     let badges = CommitBadgeStore()
+    let mcpServer: RatchetMCPServer
 
     @Published var branches: [GitBranch] = []
     @Published var selectedBranchName: String?
@@ -76,6 +77,7 @@ final class RepositoryDocument: ObservableObject {
         self.repositoryURL = repositoryURL
         self.store = store ?? .shared
         self.git = GitService(repositoryURL: repositoryURL)
+        self.mcpServer = RatchetMCPServer(repositoryPath: repositoryURL.path(percentEncoded: false))
     }
 
     // MARK: Loading
@@ -139,6 +141,7 @@ final class RepositoryDocument: ObservableObject {
         defer { isLoadingCommits = false }
         do {
             commits = try await git.commits(branch: branch)
+            mcpServer.currentBranchCommits = commits
             await loadAheadOfBase(branch: branch)
         } catch {
             commits = []
@@ -384,6 +387,41 @@ final class RepositoryDocument: ObservableObject {
         NSPasteboard.general.setString(string, forType: .string)
     }
 
+    // MARK: Claude Code integration
+
+    /// Writes a `/ratchet` slash command into the repo's `.claude/commands/` so Claude Code
+    /// (running in this repo) can pull the review comments via the MCP server. Reveals it in Finder.
+    func installClaudeCommand() {
+        let dir = repositoryURL.appendingPathComponent(".claude/commands", isDirectory: true)
+        let file = dir.appendingPathComponent("ratchet.md")
+        do {
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            try Self.claudeCommandContent.write(to: file, atomically: true, encoding: .utf8)
+            NSWorkspace.shared.activateFileViewerSelecting([file])
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private static let claudeCommandContent = """
+    ---
+    description: Pull in Ratchet review comments and address them
+    allowed-tools: mcp__ratchet__list_review_comments
+    ---
+
+    Call the `list_review_comments` tool from the `ratchet` MCP server to fetch every
+    review comment recorded for this repository.
+
+    For each comment:
+    1. Open the referenced file and locate the relevant lines.
+    2. Make the change the comment asks for, keeping the edit minimal and focused.
+
+    When you're done, give a short summary of what you changed for each comment.
+
+    (Requires Ratchet's MCP server to be running and registered:
+    `claude mcp add --transport http ratchet http://127.0.0.1:8765/mcp`)
+    """
+
     // MARK: Export
 
     func exportMarkdown() {
@@ -398,18 +436,21 @@ final class RepositoryDocument: ObservableObject {
         ExportService.save(markdown: markdown, suggestedName: "review-\(commit.shortSHA).md")
     }
 
-    /// Exports every comment across all commits in the repository into a single Markdown file.
+    /// Exports the current branch's review comments into a single Markdown file.
     func exportAllComments() {
+        let shas = Set(commits.map(\.id))
         let markdown = ExportService.markdownForAllComments(
             repositoryPath: repositoryPath,
             commits: commits,
-            store: store
+            store: store,
+            limitToCommits: shas.isEmpty ? nil : shas
         )
         ExportService.save(markdown: markdown, suggestedName: "\(repositoryName)-review-comments.md")
     }
 
-    /// Whether any comment exists for this repository (drives the "Export All" enabled state).
+    /// Whether any comment exists on the current branch (drives the export button's enabled state).
     var hasAnyComments: Bool {
-        !store.allComments(repositoryPath: repositoryPath).isEmpty
+        let shas = Set(commits.map(\.id))
+        return store.allComments(repositoryPath: repositoryPath).contains { shas.contains($0.commitSHA) }
     }
 }

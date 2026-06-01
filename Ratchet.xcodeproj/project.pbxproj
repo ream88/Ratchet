@@ -6,6 +6,10 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		AC00D4522FCE19BF006B5F57 /* MCP in Frameworks */ = {isa = PBXBuildFile; productRef = 0A1B2C3D4E5F607182930002 /* MCP */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		AC4783042FCD8589005CEC2D /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -52,6 +56,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				AC00D4522FCE19BF006B5F57 /* MCP in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -112,6 +117,7 @@
 			);
 			name = Ratchet;
 			packageProductDependencies = (
+				0A1B2C3D4E5F607182930002 /* MCP */,
 			);
 			productName = Ratchet;
 			productReference = AC4782F62FCD8588005CEC2D /* Ratchet.app */;
@@ -195,6 +201,9 @@
 			);
 			mainGroup = AC4782ED2FCD8588005CEC2D;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				0A1B2C3D4E5F607182930001 /* XCRemoteSwiftPackageReference "swift-sdk" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = AC4782F72FCD8588005CEC2D /* Products */;
 			projectDirPath = "";
@@ -573,6 +582,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		0A1B2C3D4E5F607182930001 /* XCRemoteSwiftPackageReference "swift-sdk" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/modelcontextprotocol/swift-sdk.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 0.11.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		0A1B2C3D4E5F607182930002 /* MCP */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 0A1B2C3D4E5F607182930001 /* XCRemoteSwiftPackageReference "swift-sdk" */;
+			productName = MCP;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = AC4782EE2FCD8588005CEC2D /* Project object */;
 }

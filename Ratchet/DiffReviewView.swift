@@ -37,6 +37,8 @@ struct DiffReviewView: View {
             ToolbarItem(placement: .navigation) { branchMenu }
 
             ToolbarItemGroup {
+                MCPToggleButton(server: document.mcpServer, document: document)
+
                 Button {
                     Task { await document.refresh() }
                 } label: {
@@ -51,7 +53,7 @@ struct DiffReviewView: View {
                     }
                     .disabled(document.selectedCommit == nil)
 
-                    Button("Export All Comments…") {
+                    Button("Export Branch Comments…") {
                         document.exportAllComments()
                     }
                     .disabled(!document.hasAnyComments)
@@ -337,5 +339,35 @@ private struct CommentSummaryView: View {
                 .padding(12)
             }
         }
+    }
+}
+
+/// Split toolbar control: clicking the bolt starts/stops the in-process MCP server;
+/// the dropdown holds agent-integration helpers.
+private struct MCPToggleButton: View {
+    @ObservedObject var server: RatchetMCPServer
+    let document: RepositoryDocument
+
+    var body: some View {
+        Menu {
+            Button(server.isRunning ? "Stop MCP Server" : "Start MCP Server") {
+                server.toggle()
+            }
+            Divider()
+            Button("Install /ratchet Command for Claude Code…") {
+                document.installClaudeCommand()
+            }
+            Button("Copy “claude mcp add” Command") {
+                server.copyRegistrationCommand()
+            }
+        } label: {
+            Label("Serve over MCP", systemImage: server.isRunning ? "bolt.fill" : "bolt.slash")
+        } primaryAction: {
+            server.toggle()
+        }
+        .tint(server.isRunning ? .green : nil)
+        .help(server.isRunning
+              ? "Serving review comments at \(server.endpoint) — click to stop"
+              : "Start an MCP server so a coding agent can pull these comments")
     }
 }

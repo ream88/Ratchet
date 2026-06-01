@@ -76,14 +76,19 @@ enum ExportService {
     /// Renders every comment in the repository — across all commits — into one Markdown file.
     /// Diff context comes from each record's stored anchor lines (for line comments); whole-chunk
     /// comments show their hunk header. No git calls are needed, so unvisited commits are covered.
+    /// Pass `limitToCommits` to include only comments on those commit SHAs (e.g. the current branch).
     static func markdownForAllComments(
         repositoryPath: String,
         commits: [GitCommit],
-        store: ReviewStore
+        store: ReviewStore,
+        limitToCommits: Set<String>? = nil
     ) -> String {
         var out = "# All review comments\n\nRepository: \(repositoryPath)\n"
 
-        let all = store.allComments(repositoryPath: repositoryPath)
+        var all = store.allComments(repositoryPath: repositoryPath)
+        if let limitToCommits {
+            all = all.filter { limitToCommits.contains($0.commitSHA) }
+        }
         if all.isEmpty {
             out += "\n_No review comments recorded._\n"
             return out
