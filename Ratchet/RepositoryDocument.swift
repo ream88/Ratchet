@@ -9,6 +9,7 @@
 import Foundation
 import SwiftUI
 import Combine
+import AppKit
 
 // TODO: Future improvements
 //   - Send comments directly to an AI coding agent (e.g. pipe the exported Markdown).
@@ -297,6 +298,68 @@ final class RepositoryDocument: ObservableObject {
             return !lineComments(for: hunk).isEmpty
         }
         return CommitBadge(fullyReviewed: fullyReviewed, hasComments: hasComments)
+    }
+
+    // MARK: Commit actions (sidebar context menu / shortcuts)
+
+    /// Marks every hunk of a commit reviewed, loading its diff first if needed.
+    func markCommitReviewed(_ commit: GitCommit) async {
+        let hunks = await hunks(forCommit: commit)
+        for hunk in hunks {
+            let target = ReviewStore.ReviewTarget(
+                repositoryPath: repositoryPath,
+                commitSHA: commit.id,
+                filePath: hunk.filePath,
+                hunkHeader: hunk.header,
+                contentHash: hunk.contentHash
+            )
+            store.setReviewed(true, for: target)
+        }
+        reviewedTick += 1
+        updateBadge(forCommitID: commit.id)
+    }
+
+    /// Copies all of a commit's review comments to the clipboard as Markdown.
+    func copyComments(for commit: GitCommit) async {
+        _ = await hunks(forCommit: commit)
+        if let markdown = commentsMarkdown(for: commit) {
+            Self.copyToPasteboard(markdown)
+        }
+    }
+
+    /// Synchronously builds a commit's review-comment Markdown from already-loaded hunks.
+    /// Returns nil if the commit's diff hasn't been parsed yet. Used by ⌘C in the sidebar.
+    func commentsMarkdown(for commit: GitCommit) -> String? {
+        guard let hunks = hunksByCommit[commit.id] else { return nil }
+        let files = Dictionary(grouping: hunks, by: \.filePath)
+            .map { DiffFile(id: UUID(), path: $0.key, hunks: $0.value) }
+            .sorted { $0.path < $1.path }
+        return ExportService.markdown(
+            commit: commit,
+            repositoryPath: repositoryPath,
+            branch: selectedBranchName,
+            files: files,
+            store: store
+        )
+    }
+
+    /// Copies the full commit SHA to the clipboard.
+    func copySHA(_ commit: GitCommit) {
+        Self.copyToPasteboard(commit.id)
+    }
+
+    /// Returns a commit's hunks from cache, parsing its diff on demand.
+    private func hunks(forCommit commit: GitCommit) async -> [DiffHunk] {
+        if let cached = hunksByCommit[commit.id] { return cached }
+        guard let raw = try? await git.diff(forCommit: commit.id) else { return [] }
+        let hunks = DiffParser.parse(raw).filter { !$0.hunks.isEmpty || $0.isBinary }.flatMap(\.hunks)
+        hunksByCommit[commit.id] = hunks
+        return hunks
+    }
+
+    private static func copyToPasteboard(_ string: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(string, forType: .string)
     }
 
     // MARK: Export

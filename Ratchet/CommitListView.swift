@@ -88,9 +88,40 @@ struct CommitListView: View {
                         .opacity(merged ? 0.45 : 1)
                         .tag(commit)
                         .listRowInsets(EdgeInsets(top: 5, leading: 10, bottom: 5, trailing: 10))
+                        .contextMenu {
+                            Button("Mark Commit as Reviewed") {
+                                Task { await document.markCommitReviewed(commit) }
+                            }
+                            Divider()
+                            Button("Copy Comments") {
+                                Task { await document.copyComments(for: commit) }
+                            }
+                            .keyboardShortcut("c", modifiers: .command)
+                            Button("Copy SHA") {
+                                document.copySHA(commit)
+                            }
+                            .keyboardShortcut("c", modifiers: [.command, .option])
+                        }
                     }
                 }
-                .listStyle(.inset)
+                .listStyle(.sidebar)
+                // ⌘C copies the selected commit's comments. onCopyCommand ties into the
+                // responder chain, so it only fires when the list is focused — it won't
+                // hijack ⌘C while a comment editor in the detail pane is focused.
+                .onCopyCommand {
+                    guard let commit = document.selectedCommit,
+                          let markdown = document.commentsMarkdown(for: commit) else { return [] }
+                    return [NSItemProvider(object: markdown as NSString)]
+                }
+                .background {
+                    // ⌥⌘C copies the selected commit's SHA (no standard command for this).
+                    Button("") {
+                        if let commit = document.selectedCommit { document.copySHA(commit) }
+                    }
+                    .keyboardShortcut("c", modifiers: [.command, .option])
+                    .opacity(0)
+                    .accessibilityHidden(true)
+                }
             }
         }
     }
