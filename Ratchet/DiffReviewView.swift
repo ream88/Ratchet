@@ -17,7 +17,7 @@ struct DiffReviewView: View {
             if document.selectedCommit == nil {
                 ContentUnavailableView(
                     "Select a Commit",
-                    systemImage: "arrow.left",
+                    systemImage: "checklist",
                     description: Text("Choose a commit from the sidebar to review its changes.")
                 )
             } else if document.isLoadingDiff {
@@ -34,7 +34,17 @@ struct DiffReviewView: View {
             }
         }
         .toolbar {
+            ToolbarItem(placement: .navigation) { branchMenu }
+
             ToolbarItemGroup {
+                Button {
+                    Task { await document.refresh() }
+                } label: {
+                    Label("Refresh", systemImage: "arrow.clockwise")
+                }
+                .keyboardShortcut("r", modifiers: .command)
+                .help("Reload branches and commits")
+
                 Menu {
                     Button("Export This Commit…") {
                         document.exportMarkdown()
@@ -62,6 +72,24 @@ struct DiffReviewView: View {
             CommentSummaryView(document: document)
                 .inspectorColumnWidth(min: 260, ideal: 320, max: 480)
         }
+    }
+
+    private var branchMenu: some View {
+        Menu {
+            Picker("Branch", selection: Binding(
+                get: { document.selectedBranchName ?? "" },
+                set: { name in Task { await document.selectBranch(name) } }
+            )) {
+                ForEach(document.branches) { branch in
+                    Text(branch.name).tag(branch.name)
+                }
+            }
+            .pickerStyle(.inline)
+            .labelsHidden()
+        } label: {
+            Label(document.selectedBranchName ?? "Branch", systemImage: "arrow.triangle.branch")
+        }
+        .help("Switch branch")
     }
 
     @ViewBuilder

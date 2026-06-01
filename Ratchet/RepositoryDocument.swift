@@ -103,6 +103,21 @@ final class RepositoryDocument: ObservableObject {
         }
     }
 
+    /// Reloads branches and the selected branch's commits to pick up new work in the repo.
+    /// Cached diffs/comments for existing commits stay valid (commit SHAs are immutable).
+    func refresh() async {
+        guard isValidRepository else { await load(); return }
+        errorMessage = nil
+        if let loaded = try? await git.branches() { branches = loaded }
+        if let branch = selectedBranchName {
+            await loadCommits(branch: branch)
+            if let selected = selectedCommit, !commits.contains(selected) {
+                selectedCommit = nil
+                diffFiles = []
+            }
+        }
+    }
+
     func selectBranch(_ name: String) async {
         guard name != selectedBranchName || commits.isEmpty else { return }
         selectedBranchName = name
