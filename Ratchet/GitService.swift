@@ -30,7 +30,7 @@ enum GitError: LocalizedError {
 struct GitService {
     let repositoryURL: URL
 
-    var repositoryPath: String { repositoryURL.path(percentEncoded: false) }
+    nonisolated var repositoryPath: String { repositoryURL.path(percentEncoded: false) }
 
     // MARK: Public API
 
