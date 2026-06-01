@@ -19,34 +19,7 @@ struct CommitListView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            branchPicker
-                .padding(.horizontal, 10)
-                .padding(.vertical, 8)
-            Divider()
-            commitList
-        }
-    }
-
-    @ViewBuilder
-    private var branchPicker: some View {
-        if document.branches.isEmpty {
-            Text("No branches")
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        } else {
-            Picker("Branch", selection: Binding(
-                get: { document.selectedBranchName ?? "" },
-                set: { name in
-                    Task { await document.selectBranch(name) }
-                }
-            )) {
-                ForEach(document.branches) { branch in
-                    Text(branch.name).tag(branch.name)
-                }
-            }
-            .labelsHidden()
-        }
+        commitList
     }
 
     @ViewBuilder

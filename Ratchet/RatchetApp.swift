@@ -55,8 +55,6 @@ struct RootView: View {
     var body: some View {
         if let repositoryURL {
             ContentView(repositoryURL: repositoryURL)
-                .navigationTitle(repositoryURL.lastPathComponent)
-                .navigationSubtitle(repositoryURL.path(percentEncoded: false))
         } else {
             WelcomeView()
         }
