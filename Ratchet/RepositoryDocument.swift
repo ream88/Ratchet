@@ -111,16 +111,21 @@ final class RepositoryDocument: ObservableObject {
         }
     }
 
-    // MARK: Comments
+    // MARK: Review state
 
-    func commentKey(for hunk: DiffHunk) -> String? {
+    func reviewTarget(for hunk: DiffHunk) -> ReviewStore.ReviewTarget? {
         guard let sha = selectedCommit?.id else { return nil }
-        return ReviewStore.key(
+        return ReviewStore.ReviewTarget(
             repositoryPath: repositoryPath,
             commitSHA: sha,
             filePath: hunk.filePath,
-            hunkHeader: hunk.header
+            hunkHeader: hunk.header,
+            contentHash: hunk.contentHash
         )
+    }
+
+    func commentKey(for hunk: DiffHunk) -> String? {
+        reviewTarget(for: hunk)?.key
     }
 
     func commentText(for hunk: DiffHunk) -> String {
@@ -129,15 +134,18 @@ final class RepositoryDocument: ObservableObject {
     }
 
     func setComment(_ text: String, for hunk: DiffHunk) {
-        guard let key = commentKey(for: hunk), let sha = selectedCommit?.id else { return }
-        store.setText(
-            text,
-            forKey: key,
-            repositoryPath: repositoryPath,
-            commitSHA: sha,
-            filePath: hunk.filePath,
-            hunkHeader: hunk.header
-        )
+        guard let target = reviewTarget(for: hunk) else { return }
+        store.setText(text, for: target)
+    }
+
+    func isReviewed(_ hunk: DiffHunk) -> Bool {
+        guard let key = commentKey(for: hunk) else { return false }
+        return store.isReviewed(forKey: key)
+    }
+
+    func setReviewed(_ reviewed: Bool, for hunk: DiffHunk) {
+        guard let target = reviewTarget(for: hunk) else { return }
+        store.setReviewed(reviewed, for: target)
     }
 
     // MARK: Export

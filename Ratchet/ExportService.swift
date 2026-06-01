@@ -29,12 +29,7 @@ enum ExportService {
         for file in files {
             // Only include hunks that actually have a comment.
             let commentedHunks = file.hunks.compactMap { hunk -> (DiffHunk, String)? in
-                let key = ReviewStore.key(
-                    repositoryPath: repositoryPath,
-                    commitSHA: commit.id,
-                    filePath: hunk.filePath,
-                    hunkHeader: hunk.header
-                )
+                let key = ReviewStore.key(repositoryPath: repositoryPath, contentHash: hunk.contentHash)
                 let text = store.text(forKey: key).trimmingCharacters(in: .whitespacesAndNewlines)
                 return text.isEmpty ? nil : (hunk, text)
             }

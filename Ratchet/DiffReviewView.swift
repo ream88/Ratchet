@@ -165,16 +165,42 @@ private struct CommentSummaryView: View {
         return result
     }
 
+    /// (reviewed, total) hunk counts for the current commit.
+    private var reviewProgress: (reviewed: Int, total: Int) {
+        var reviewed = 0
+        var total = 0
+        for file in document.diffFiles {
+            for hunk in file.hunks {
+                total += 1
+                if document.isReviewed(hunk) { reviewed += 1 }
+            }
+        }
+        return (reviewed, total)
+    }
+
     var body: some View {
         let items = commented
+        let progress = reviewProgress
         VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Text("Comments")
-                    .font(.headline)
-                Spacer()
-                Text("\(items.count)")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text("Comments")
+                        .font(.headline)
+                    Spacer()
+                    Text("\(items.count)")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+                if progress.total > 0 {
+                    HStack(spacing: 6) {
+                        Image(systemName: progress.reviewed == progress.total
+                              ? "checkmark.circle.fill" : "circle.dashed")
+                            .foregroundStyle(progress.reviewed == progress.total ? .green : .secondary)
+                        Text("\(progress.reviewed) of \(progress.total) chunks reviewed")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
             }
             .padding(12)
             Divider()

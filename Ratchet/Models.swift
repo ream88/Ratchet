@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import CryptoKit
 
 // MARK: - Git
 
@@ -57,15 +58,33 @@ struct DiffHunk: Identifiable {
     var rawText: String {
         var out = header
         for line in lines {
-            let prefix: String
-            switch line.kind {
-            case .context: prefix = " "
-            case .addition: prefix = "+"
-            case .deletion: prefix = "-"
-            }
-            out += "\n" + prefix + line.content
+            out += "\n" + marker(for: line.kind) + line.content
         }
         return out
+    }
+
+    /// Stable identity for the chunk based on its *content*, not its line ranges.
+    ///
+    /// The `@@ … @@` header is deliberately excluded because its line numbers shift
+    /// whenever unrelated edits land above the hunk. Hashing the file path plus the
+    /// marked body lines means: identical changes keep the same hash (review state and
+    /// comments persist), while a rewrite produces a new hash that must be reviewed again.
+    var contentHash: String {
+        var hasher = SHA256()
+        hasher.update(data: Data(filePath.utf8))
+        hasher.update(data: Data("\n".utf8))
+        for line in lines {
+            hasher.update(data: Data((marker(for: line.kind) + line.content + "\n").utf8))
+        }
+        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
+    }
+
+    private func marker(for kind: DiffLineKind) -> String {
+        switch kind {
+        case .context: return " "
+        case .addition: return "+"
+        case .deletion: return "-"
+        }
     }
 }
 
@@ -82,10 +101,14 @@ struct DiffFile: Identifiable {
 struct ReviewComment: Codable, Identifiable {
     let id: UUID
     let repositoryPath: String
-    let commitSHA: String
+    /// Stable, content-based chunk identity. The primary key for review state.
+    let contentHash: String
     let filePath: String
-    let hunkHeader: String
+    /// Last commit/header the chunk was seen in — informational, refreshed on each sighting.
+    var commitSHA: String
+    var hunkHeader: String
     var comment: String
+    var isReviewed: Bool
     var createdAt: Date
     var updatedAt: Date
 }
