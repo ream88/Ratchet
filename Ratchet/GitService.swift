@@ -101,7 +101,8 @@ struct GitService {
     }
 
     /// The raw unified diff for a single commit (vs. its first parent), with no commit header.
-    nonisolated func diff(forCommit sha: String, contextLines: Int = 50) async throws -> String {
+    /// A small context window keeps the review focused on the changed chunks, not whole files.
+    nonisolated func diff(forCommit sha: String, contextLines: Int = 3) async throws -> String {
         return try await run([
             "show",
             "--format=",

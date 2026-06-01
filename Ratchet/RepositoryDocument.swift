@@ -102,7 +102,9 @@ final class RepositoryDocument: ObservableObject {
         defer { isLoadingDiff = false }
         do {
             let raw = try await git.diff(forCommit: commit.id)
-            diffFiles = DiffParser.parse(raw)
+            // Keep only files with real content changes; binary files count even
+            // though they have no textual hunks. This drops mode/metadata-only noise.
+            diffFiles = DiffParser.parse(raw).filter { !$0.hunks.isEmpty || $0.isBinary }
         } catch {
             diffFiles = []
             errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
