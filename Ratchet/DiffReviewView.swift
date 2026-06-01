@@ -35,12 +35,19 @@ struct DiffReviewView: View {
         }
         .toolbar {
             ToolbarItemGroup {
-                Button {
-                    document.exportMarkdown()
+                Menu {
+                    Button("Export This Commit…") {
+                        document.exportMarkdown()
+                    }
+                    .disabled(document.selectedCommit == nil)
+
+                    Button("Export All Comments…") {
+                        document.exportAllComments()
+                    }
+                    .disabled(!document.hasAnyComments)
                 } label: {
                     Label("Export", systemImage: "square.and.arrow.up")
                 }
-                .disabled(document.selectedCommit == nil)
                 .help("Export review comments as Markdown")
 
                 Button {
@@ -67,17 +74,89 @@ struct DiffReviewView: View {
             )
         } else {
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 20) {
+                LazyVStack(alignment: .leading, spacing: 16, pinnedViews: [.sectionHeaders]) {
                     if let commit = document.selectedCommit {
                         CommitHeaderView(commit: commit, branch: document.selectedBranchName)
+                            .padding(.horizontal, 16)
+                            .padding(.top, 12)
                     }
                     ForEach(document.diffFiles) { file in
-                        DiffFileView(file: file, document: document)
+                        Section {
+                            // Hunks are direct children of the LazyVStack (not nested in a
+                            // VStack) so very large files render their hunks lazily on scroll.
+                            if file.isBinary {
+                                fileNote("Binary file — no textual diff.")
+                            } else if file.hunks.isEmpty {
+                                fileNote("No hunks (file mode or metadata change only).")
+                            } else {
+                                ForEach(file.hunks) { hunk in
+                                    DiffHunkView(hunk: hunk, document: document)
+                                        .padding(.horizontal, 16)
+                                }
+                            }
+                        } header: {
+                            FileHeaderView(file: file, document: document)
+                        }
                     }
                 }
-                .padding(16)
+                .padding(.bottom, 16)
             }
         }
+    }
+
+    private func fileNote(_ text: String) -> some View {
+        Text(text)
+            .font(.callout)
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// Sticky per-file header: file path, review progress, and a "mark all reviewed" control.
+private struct FileHeaderView: View {
+    let file: DiffFile
+    @ObservedObject var document: RepositoryDocument
+
+    var body: some View {
+        let progress = document.reviewProgress(forFile: file)
+        let allReviewed = progress.total > 0 && progress.reviewed == progress.total
+
+        HStack(spacing: 8) {
+            Image(systemName: "doc.text")
+                .foregroundStyle(.secondary)
+            Text(file.path)
+                .font(.headline)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .textSelection(.enabled)
+
+            Spacer(minLength: 8)
+
+            if progress.total > 0 {
+                Text("\(progress.reviewed)/\(progress.total)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+
+                Toggle(isOn: Binding(
+                    get: { allReviewed },
+                    set: { document.setReviewed($0, forFile: file) }
+                )) {
+                    Label(allReviewed ? "Reviewed" : "Mark all reviewed",
+                          systemImage: allReviewed ? "checkmark.circle.fill" : "circle")
+                        .labelStyle(.titleAndIcon)
+                        .font(.caption)
+                }
+                .toggleStyle(.button)
+                .controlSize(.small)
+                .tint(.green)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .background(.bar)
+        .overlay(alignment: .bottom) { Divider() }
     }
 }
 
@@ -105,41 +184,6 @@ private struct CommitHeaderView: View {
     }
 }
 
-private struct DiffFileView: View {
-    let file: DiffFile
-    @ObservedObject var document: RepositoryDocument
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 6) {
-                Image(systemName: "doc.text")
-                    .foregroundStyle(.secondary)
-                Text(file.path)
-                    .font(.headline)
-                    .textSelection(.enabled)
-            }
-
-            if file.isBinary {
-                Text("Binary file — no textual diff.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .padding(.leading, 4)
-            } else if file.hunks.isEmpty {
-                Text("No hunks (file mode or metadata change only).")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .padding(.leading, 4)
-            } else {
-                ForEach(file.hunks) { hunk in
-                    DiffHunkView(hunk: hunk, document: document)
-                }
-            }
-        }
-        .padding(12)
-        .background(.background.secondary, in: RoundedRectangle(cornerRadius: 10))
-    }
-}
-
 /// Right inspector: lists every hunk that has a comment for the current commit.
 private struct CommentSummaryView: View {
     @ObservedObject var document: RepositoryDocument
@@ -155,14 +199,28 @@ private struct CommentSummaryView: View {
         var result: [(String, String, String)] = []
         for file in document.diffFiles {
             for hunk in file.hunks {
-                guard let key = document.commentKey(for: hunk) else { continue }
-                let text = store.text(forKey: key).trimmingCharacters(in: .whitespacesAndNewlines)
-                if !text.isEmpty {
-                    result.append((file.path, hunk.header, text))
+                if let key = document.commentKey(for: hunk) {
+                    let text = store.text(forKey: key).trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !text.isEmpty {
+                        result.append((file.path, hunk.header, text))
+                    }
+                }
+                for item in document.lineComments(for: hunk) {
+                    result.append((file.path, lineLabel(for: item.range, in: hunk), item.record.comment))
                 }
             }
         }
         return result
+    }
+
+    private func lineLabel(for range: ClosedRange<Int>, in hunk: DiffHunk) -> String {
+        func number(_ i: Int) -> String {
+            let line = hunk.lines[i]
+            return (line.newLineNumber ?? line.oldLineNumber).map(String.init) ?? "?"
+        }
+        return range.count == 1
+            ? "Line \(number(range.lowerBound))"
+            : "Lines \(number(range.lowerBound))–\(number(range.upperBound))"
     }
 
     /// (reviewed, total) hunk counts for the current commit.
