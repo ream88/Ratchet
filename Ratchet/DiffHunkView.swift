@@ -19,12 +19,12 @@ struct DiffHunkView: View {
     @State private var isReviewed = false
     @State private var isExpanded = true
 
-    // Line-range selection + composer state.
+    // Line-range selection + composer state. A non-nil selectedRange means the composer is open.
     @State private var selectedRange: ClosedRange<Int>?
     @State private var anchorIndex: Int?
-    @State private var isComposing = false
     @State private var lineComments: [(range: ClosedRange<Int>, record: ReviewComment)] = []
     @State private var isEditingNote = false
+    @State private var noteHovering = false
     @FocusState private var composerFocused: Bool
     @FocusState private var noteFocused: Bool
 
@@ -69,7 +69,6 @@ struct DiffHunkView: View {
             isExpanded = !reviewed
             selectedRange = nil
             anchorIndex = nil
-            isComposing = false
             isEditingNote = false
             refreshLineComments()
         }
@@ -186,18 +185,15 @@ struct DiffHunkView: View {
             selectedRange = index...index
             anchorIndex = index
         }
-        isComposing = false
     }
 
-    /// Selects a single line and opens its comment composer immediately (the hover "+" button).
+    /// Selects a single line and opens its comment composer (the hover "+" button).
     private func startComment(at index: Int) {
         selectedRange = index...index
         anchorIndex = index
-        isComposing = true
     }
 
     private func closeComposer() {
-        isComposing = false
         selectedRange = nil
         anchorIndex = nil
         refreshLineComments()
@@ -213,38 +209,27 @@ struct DiffHunkView: View {
         )
 
         VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
-                Label(label(for: range), systemImage: "text.cursor")
+            HStack {
+                Text(label(for: range))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer()
-                Button("Cancel") { closeComposer() }
+                Button("Done") { closeComposer() }
                     .controlSize(.small)
                     .keyboardShortcut(.cancelAction)
             }
-
-            if isComposing {
-                TextEditor(text: text)
-                    .font(.body)
-                    .frame(minHeight: 56)
-                    .padding(4)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 6)
-                            .stroke(Color.gray.opacity(0.3), lineWidth: 1)
-                    )
-                    .focused($composerFocused)
-                    .onAppear { composerFocused = true }
-            } else {
-                Button("Add Comment") { isComposing = true }
-                    .controlSize(.small)
-            }
+            TextEditor(text: text)
+                .font(.body)
+                .frame(minHeight: 56)
+                .padding(4)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(Color.gray.opacity(0.25), lineWidth: 1)
+                )
+                .focused($composerFocused)
+                .onAppear { composerFocused = true }
         }
-        .padding(8)
-        .background(Color.accentColor.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))
-        .overlay(
-            RoundedRectangle(cornerRadius: 6)
-                .stroke(Color.accentColor.opacity(0.3), lineWidth: 1)
-        )
+        .commentBox()
     }
 
     private func refreshLineComments() {
@@ -255,7 +240,7 @@ struct DiffHunkView: View {
     /// (which already shows its own editor, so we avoid rendering a duplicate card).
     private func visibleLineComments(endingAt index: Int) -> [(range: ClosedRange<Int>, record: ReviewComment)] {
         lineComments.filter { item in
-            item.range.upperBound == index && !(isComposing && item.range == selectedRange)
+            item.range.upperBound == index && item.range != selectedRange
         }
     }
 
@@ -273,22 +258,13 @@ struct DiffHunkView: View {
 
     @ViewBuilder
     private var hunkNoteEditor: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Label("Note for whole hunk", systemImage: "square.and.pencil")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Spacer()
-                if isEditingNote {
-                    Button("Done") { isEditingNote = false }
-                        .controlSize(.small)
+        if isEditingNote {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text("Note for whole hunk").font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Done") { isEditingNote = false }.controlSize(.small)
                 }
-            }
-
-            // Only build the (heavy, NSTextView-backed) TextEditor while actually editing.
-            // Otherwise show lightweight text / a button, so a big commit doesn't instantiate
-            // a TextEditor per hunk.
-            if isEditingNote {
                 TextEditor(text: $commentText)
                     .font(.body)
                     .frame(minHeight: 56)
@@ -302,16 +278,49 @@ struct DiffHunkView: View {
                     .onChange(of: commentText) { _, newValue in
                         document.setComment(newValue, for: hunk)
                     }
-            } else if commentText.isEmpty {
-                Button("Add note") { isEditingNote = true }
-                    .controlSize(.small)
-            } else {
+            }
+            .commentBox()
+        } else if !commentText.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text("Note for whole hunk").font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                    Button(role: .destructive) {
+                        commentText = ""
+                        document.setComment("", for: hunk)
+                    } label: {
+                        Image(systemName: "trash")
+                    }
+                    .buttonStyle(.borderless)
+                    .opacity(noteHovering ? 1 : 0)
+                    .help("Delete note")
+                }
                 Text(commentText)
-                    .font(.body)
+                    .font(.callout)
+                    .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .contentShape(Rectangle())
                     .onTapGesture { isEditingNote = true }
             }
+            .commentBox()
+            .onHover { hovering in
+                withAnimation(.easeInOut(duration: 0.12)) { noteHovering = hovering }
+            }
+        } else {
+            // Empty: the pencil icon, which becomes the blue "+" on hover (matching lines).
+            HStack(spacing: 6) {
+                Image(systemName: noteHovering ? "plus.circle.fill" : "square.and.pencil")
+                    .font(.callout)
+                    .frame(width: 18, height: 18)
+                    .foregroundStyle(noteHovering ? Color.accentColor : .secondary)
+                Text("Note for whole hunk").font(.caption).foregroundStyle(.secondary)
+                Spacer()
+            }
+            .contentShape(Rectangle())
+            .onHover { hovering in
+                withAnimation(.easeInOut(duration: 0.12)) { noteHovering = hovering }
+            }
+            .onTapGesture { isEditingNote = true }
         }
     }
 }
@@ -324,11 +333,12 @@ private struct LineCommentCard: View {
     let onDelete: () -> Void
 
     @State private var isEditing = false
+    @State private var hovering = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Label(rangeLabel, systemImage: "text.bubble")
+                Text(rangeLabel)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer()
@@ -336,46 +346,50 @@ private struct LineCommentCard: View {
                     Button("Done") { isEditing = false }
                         .controlSize(.small)
                 } else {
-                    Button {
-                        isEditing = true
-                    } label: {
-                        Image(systemName: "pencil")
+                    Button(role: .destructive) { onDelete() } label: {
+                        Image(systemName: "trash")
                     }
                     .buttonStyle(.borderless)
-                    .help("Edit comment")
+                    .opacity(hovering ? 1 : 0)
+                    .help("Delete comment")
                 }
-                Button(role: .destructive) {
-                    onDelete()
-                } label: {
-                    Image(systemName: "trash")
-                }
-                .buttonStyle(.borderless)
-                .help("Delete comment")
             }
 
             if isEditing {
                 // Auto-saves through the binding; no Save button.
                 TextEditor(text: $text)
                     .font(.body)
-                    .frame(minHeight: 48)
+                    .frame(minHeight: 56)
                     .padding(4)
                     .overlay(
                         RoundedRectangle(cornerRadius: 6)
-                            .stroke(Color.gray.opacity(0.3), lineWidth: 1)
+                            .stroke(Color.gray.opacity(0.25), lineWidth: 1)
                     )
             } else {
                 Text(text)
                     .font(.callout)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                    .onTapGesture { isEditing = true }
             }
         }
-        .padding(8)
-        .background(Color.yellow.opacity(0.10), in: RoundedRectangle(cornerRadius: 6))
-        .overlay(
-            RoundedRectangle(cornerRadius: 6)
-                .stroke(Color.orange.opacity(0.4), lineWidth: 1)
-        )
+        .commentBox()
+        .onHover { hovering in
+            withAnimation(.easeInOut(duration: 0.12)) { self.hovering = hovering }
+        }
+    }
+}
+
+/// Shared neutral container used by both line comments and the whole-hunk note.
+private extension View {
+    func commentBox() -> some View {
+        padding(8)
+            .background(Color.gray.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
+            .overlay(
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(Color.gray.opacity(0.25), lineWidth: 1)
+            )
     }
 }
 
