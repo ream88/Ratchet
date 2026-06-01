@@ -24,7 +24,21 @@ struct DiffHunkView: View {
     @State private var anchorIndex: Int?
     @State private var isComposing = false
     @State private var lineComments: [(range: ClosedRange<Int>, record: ReviewComment)] = []
+    @State private var isEditingNote = false
     @FocusState private var composerFocused: Bool
+    @FocusState private var noteFocused: Bool
+
+    init(hunk: DiffHunk, document: RepositoryDocument) {
+        self.hunk = hunk
+        _document = ObservedObject(wrappedValue: document)
+        // Preload persisted state so the first frame is already correct — a reviewed (collapsed)
+        // hunk renders collapsed immediately instead of rendering every line, then collapsing.
+        let reviewed = document.isReviewed(hunk)
+        _commentText = State(initialValue: document.commentText(for: hunk))
+        _isReviewed = State(initialValue: reviewed)
+        _isExpanded = State(initialValue: !reviewed)
+        _lineComments = State(initialValue: document.lineComments(for: hunk))
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -46,13 +60,17 @@ struct DiffHunkView: View {
                         lineWidth: 1)
         )
         .opacity(isReviewed && !isExpanded ? 0.7 : 1)
-        .task(id: hunk.id) {
+        .onChange(of: hunk.id) {
+            // Only fires if SwiftUI reuses this instance for a different hunk; the initial
+            // state is already seeded in init, so normal appearance does no extra work.
             commentText = document.commentText(for: hunk)
-            isReviewed = document.isReviewed(hunk)
-            isExpanded = !isReviewed
+            let reviewed = document.isReviewed(hunk)
+            isReviewed = reviewed
+            isExpanded = !reviewed
             selectedRange = nil
             anchorIndex = nil
             isComposing = false
+            isEditingNote = false
             refreshLineComments()
         }
         .onChange(of: document.reviewedTick) {
@@ -253,22 +271,47 @@ struct DiffHunkView: View {
 
     // MARK: Whole-chunk note
 
+    @ViewBuilder
     private var hunkNoteEditor: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Label("Note for whole chunk", systemImage: "square.and.pencil")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            TextEditor(text: $commentText)
-                .font(.body)
-                .frame(minHeight: 56)
-                .padding(4)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 6)
-                        .stroke(Color.gray.opacity(0.25), lineWidth: 1)
-                )
-                .onChange(of: commentText) { _, newValue in
-                    document.setComment(newValue, for: hunk)
+            HStack {
+                Label("Note for whole chunk", systemImage: "square.and.pencil")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                if isEditingNote {
+                    Button("Done") { isEditingNote = false }
+                        .controlSize(.small)
                 }
+            }
+
+            // Only build the (heavy, NSTextView-backed) TextEditor while actually editing.
+            // Otherwise show lightweight text / a button, so a big commit doesn't instantiate
+            // a TextEditor per hunk.
+            if isEditingNote {
+                TextEditor(text: $commentText)
+                    .font(.body)
+                    .frame(minHeight: 56)
+                    .padding(4)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(Color.gray.opacity(0.25), lineWidth: 1)
+                    )
+                    .focused($noteFocused)
+                    .onAppear { noteFocused = true }
+                    .onChange(of: commentText) { _, newValue in
+                        document.setComment(newValue, for: hunk)
+                    }
+            } else if commentText.isEmpty {
+                Button("Add note") { isEditingNote = true }
+                    .controlSize(.small)
+            } else {
+                Text(commentText)
+                    .font(.body)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                    .onTapGesture { isEditingNote = true }
+            }
         }
     }
 }
@@ -358,7 +401,6 @@ private struct DiffLineRow: View {
                 .foregroundStyle(markerColor)
 
             Text(line.content.isEmpty ? " " : line.content)
-                .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.trailing, 8)
         }
