@@ -9,11 +9,19 @@ import SwiftUI
 
 struct CommitListView: View {
     @ObservedObject var document: RepositoryDocument
+    // Observed so review-state changes refresh the per-commit "reviewed" badge.
+    @ObservedObject private var store: ReviewStore
+
+    init(document: RepositoryDocument) {
+        self.document = document
+        self.store = document.store
+    }
 
     var body: some View {
         VStack(spacing: 0) {
             branchPicker
-                .padding(8)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
             Divider()
             commitList
         }
@@ -62,8 +70,13 @@ struct CommitListView: View {
                 }
             )) {
                 ForEach(document.commits) { commit in
-                    CommitRow(commit: commit)
-                        .tag(commit)
+                    CommitRow(
+                        commit: commit,
+                        isFullyReviewed: document.isFullyReviewed(commit) == true,
+                        hasUnresolvedComments: document.hasUnresolvedComments(commit)
+                    )
+                    .tag(commit)
+                    .listRowInsets(EdgeInsets(top: 5, leading: 10, bottom: 5, trailing: 10))
                 }
             }
             .listStyle(.inset)
@@ -73,29 +86,61 @@ struct CommitListView: View {
 
 private struct CommitRow: View {
     let commit: GitCommit
+    let isFullyReviewed: Bool
+    let hasUnresolvedComments: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(commit.title)
-                .lineLimit(2)
-                .font(.callout.weight(.medium))
-            HStack(spacing: 6) {
-                Text(commit.shortSHA)
-                    .font(.system(.caption, design: .monospaced))
-                    .foregroundStyle(.secondary)
-                Text("·")
-                    .foregroundStyle(.secondary)
-                Text(commit.author)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+        HStack(alignment: .top, spacing: 8) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(commit.title)
+                    .lineLimit(2)
+                    .font(.callout.weight(.medium))
+                HStack(spacing: 6) {
+                    Text(commit.shortSHA)
+                        .font(.system(.caption, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                    Text("·")
+                        .foregroundStyle(.secondary)
+                    Text(commit.author)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                if let date = commit.date {
+                    Text(date, format: .dateTime.year().month().day().hour().minute())
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
             }
-            if let date = commit.date {
-                Text(date, format: .dateTime.year().month().day().hour().minute())
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
+
+            Spacer(minLength: 0)
+
+            VStack(alignment: .trailing, spacing: 4) {
+                if hasUnresolvedComments {
+                    Image(systemName: "exclamationmark.bubble.fill")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .help("Has unresolved review comments")
+                }
+                if isFullyReviewed {
+                    reviewedBadge
+                }
             }
         }
-        .padding(.vertical, 2)
+        .padding(.vertical, 3)
+    }
+
+    private var reviewedBadge: some View {
+        HStack(spacing: 3) {
+            Image(systemName: "checkmark.circle.fill")
+            Text("Reviewed")
+        }
+        .font(.caption2.weight(.semibold))
+        .foregroundStyle(.green)
+        .padding(.horizontal, 7)
+        .padding(.vertical, 3)
+        .background(Color.green.opacity(0.15), in: Capsule())
+        .help("All chunks in this commit are reviewed")
+        .fixedSize()
     }
 }

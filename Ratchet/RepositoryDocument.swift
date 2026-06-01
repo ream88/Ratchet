@@ -35,6 +35,10 @@ final class RepositoryDocument: ObservableObject {
     @Published var errorMessage: String?
     @Published private(set) var isValidRepository = false
 
+    /// Content hashes of each loaded commit's chunks, cached as commits are opened so the
+    /// sidebar can show a "reviewed" badge without re-diffing every commit up front.
+    @Published private(set) var chunkHashesByCommit: [String: [String]] = [:]
+
     private let git: GitService
 
     var repositoryPath: String { repositoryURL.path(percentEncoded: false) }
@@ -105,6 +109,7 @@ final class RepositoryDocument: ObservableObject {
             // Keep only files with real content changes; binary files count even
             // though they have no textual hunks. This drops mode/metadata-only noise.
             diffFiles = DiffParser.parse(raw).filter { !$0.hunks.isEmpty || $0.isBinary }
+            chunkHashesByCommit[commit.id] = diffFiles.flatMap { $0.hunks.map(\.contentHash) }
         } catch {
             diffFiles = []
             errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
@@ -146,6 +151,26 @@ final class RepositoryDocument: ObservableObject {
     func setReviewed(_ reviewed: Bool, for hunk: DiffHunk) {
         guard let target = reviewTarget(for: hunk) else { return }
         store.setReviewed(reviewed, for: target)
+    }
+
+    /// Whether every chunk of a commit is reviewed. Returns nil when the commit's diff
+    /// hasn't been loaded yet (so the sidebar can stay quiet rather than guess).
+    func isFullyReviewed(_ commit: GitCommit) -> Bool? {
+        guard let hashes = chunkHashesByCommit[commit.id], !hashes.isEmpty else { return nil }
+        return hashes.allSatisfy {
+            store.isReviewed(forKey: ReviewStore.key(repositoryPath: repositoryPath, contentHash: $0))
+        }
+    }
+
+    /// Whether a commit still carries comments on its current chunks. A comment auto-resolves
+    /// when the chunk it's attached to changes (new content hash), so any comment that still
+    /// matches a live chunk is considered unresolved. False until the commit's diff is loaded.
+    func hasUnresolvedComments(_ commit: GitCommit) -> Bool {
+        guard let hashes = chunkHashesByCommit[commit.id] else { return false }
+        return hashes.contains { hash in
+            let text = store.text(forKey: ReviewStore.key(repositoryPath: repositoryPath, contentHash: hash))
+            return !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
     }
 
     // MARK: Export
