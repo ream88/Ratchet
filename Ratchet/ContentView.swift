@@ -21,10 +21,14 @@ struct ContentView: View {
         } detail: {
             DiffReviewView(document: document)
         }
+        .persistWindowFrame("Ratchet.window:\(document.repositoryPath)")
         .task {
             // Only the first appearance should kick off loading.
             if document.commits.isEmpty && document.errorMessage == nil {
                 await document.load()
+                if document.isValidRepository {
+                    RecentRepositoriesStore.shared.add(document.repositoryURL)
+                }
             }
         }
         .alert(

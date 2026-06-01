@@ -11,14 +11,30 @@ import AppKit
 @main
 struct RatchetApp: App {
     var body: some Scene {
-        // One window per repository. The window's value is the repo folder URL;
-        // a window with no value shows the welcome screen.
-        WindowGroup(id: "repository", for: URL.self) { $url in
-            RootView(repositoryURL: url)
+        // Welcome window — the launch window; reopenable from the Window menu.
+        Window("Welcome to Ratchet", id: "welcome") {
+            WelcomeView()
         }
+        .windowStyle(.hiddenTitleBar)
+        .defaultSize(width: 720, height: 460)
+        .defaultPosition(.center)
+        .commandsRemoved()
+
+        // One window per repository, keyed by its folder URL.
+        WindowGroup(id: "repository", for: URL.self) { $url in
+            if let url {
+                ContentView(repositoryURL: url)
+            } else {
+                WelcomeView()
+            }
+        }
+        .defaultSize(width: 1200, height: 800)
         .commands {
             CommandGroup(replacing: .newItem) {
                 OpenRepositoryButton()
+            }
+            CommandGroup(after: .windowArrangement) {
+                WelcomeMenuButton()
             }
         }
     }
@@ -30,59 +46,23 @@ struct OpenRepositoryButton: View {
 
     var body: some View {
         Button("Open Repository…") {
-            if let url = Self.chooseFolder() {
+            if let url = WelcomeView.chooseFolder() {
+                RecentRepositoriesStore.shared.add(url)
                 openWindow(id: "repository", value: url)
             }
         }
         .keyboardShortcut("o", modifiers: .command)
     }
-
-    static func chooseFolder() -> URL? {
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        panel.allowsMultipleSelection = false
-        panel.prompt = "Open"
-        panel.message = "Choose a Git repository folder to review."
-        return panel.runModal() == .OK ? panel.url : nil
-    }
 }
 
-/// Routes between the welcome screen and a loaded repository.
-struct RootView: View {
-    let repositoryURL: URL?
-
-    var body: some View {
-        if let repositoryURL {
-            ContentView(repositoryURL: repositoryURL)
-        } else {
-            WelcomeView()
-        }
-    }
-}
-
-struct WelcomeView: View {
+/// Reopens the welcome window from the Window menu.
+struct WelcomeMenuButton: View {
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
-        VStack(spacing: 16) {
-            Image(systemName: "checklist")
-                .font(.system(size: 56))
-                .foregroundStyle(.tint)
-            Text("Ratchet")
-                .font(.largeTitle.bold())
-            Text("Review AI-generated commits and leave notes for your coding agent.")
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-            Button("Open Repository…") {
-                if let url = OpenRepositoryButton.chooseFolder() {
-                    openWindow(id: "repository", value: url)
-                }
-            }
-            .keyboardShortcut("o", modifiers: .command)
-            .controlSize(.large)
+        Button("Welcome to Ratchet") {
+            openWindow(id: "welcome")
         }
-        .padding(40)
-        .frame(minWidth: 420, minHeight: 320)
+        .keyboardShortcut("0", modifiers: [.command, .shift])
     }
 }
