@@ -87,7 +87,7 @@ struct DiffReviewView: View {
             .pickerStyle(.inline)
             .labelsHidden()
         } label: {
-            Label(document.selectedBranchName ?? "Branch", systemImage: "arrow.triangle.branch")
+            Label("Switch Branch", systemImage: "arrow.triangle.branch")
         }
         .help("Switch branch")
     }

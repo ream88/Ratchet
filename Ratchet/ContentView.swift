@@ -43,7 +43,7 @@ struct ContentView: View {
         } message: { message in
             Text(message)
         }
-        .navigationTitle(document.repositoryName)
-        .navigationSubtitle(document.repositoryPath)
+        .navigationTitle(document.selectedBranchName ?? document.repositoryName)
+        .navigationSubtitle(document.repositoryDisplayPath)
     }
 }

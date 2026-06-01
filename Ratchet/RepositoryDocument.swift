@@ -65,6 +65,13 @@ final class RepositoryDocument: ObservableObject {
     var repositoryPath: String { repositoryURL.path(percentEncoded: false) }
     var repositoryName: String { repositoryURL.lastPathComponent }
 
+    /// Display-only path without a trailing slash. (Keep `repositoryPath` as-is — it keys
+    /// all persisted review data.)
+    var repositoryDisplayPath: String {
+        let path = repositoryPath
+        return path.count > 1 && path.hasSuffix("/") ? String(path.dropLast()) : path
+    }
+
     init(repositoryURL: URL, store: ReviewStore? = nil) {
         self.repositoryURL = repositoryURL
         self.store = store ?? .shared
