@@ -1,5 +1,7 @@
 # Ratchet
 
+<img src="docs/code-review-meme.png" alt="Code review reality" width="300" align="right">
+
 A native macOS app for reviewing local Git commits — built for reviewing
 AI-generated code and handing structured notes back to a coding agent.
 
