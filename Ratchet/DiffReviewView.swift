@@ -254,7 +254,7 @@ private struct CommentSummaryView: View {
                         Image(systemName: progress.reviewed == progress.total
                               ? "checkmark.circle.fill" : "circle.dashed")
                             .foregroundStyle(progress.reviewed == progress.total ? .green : .secondary)
-                        Text("\(progress.reviewed) of \(progress.total) chunks reviewed")
+                        Text("\(progress.reviewed) of \(progress.total) hunks reviewed")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -264,11 +264,21 @@ private struct CommentSummaryView: View {
             Divider()
 
             if items.isEmpty {
-                ContentUnavailableView(
-                    "No Comments Yet",
-                    systemImage: "text.bubble",
-                    description: Text("Write notes under a hunk and they'll appear here.")
-                )
+                // Compact, top-aligned empty state (ContentUnavailableView centers with a
+                // large icon, which is too heavy for this narrow inspector).
+                VStack(alignment: .leading, spacing: 4) {
+                    Image(systemName: "text.bubble")
+                        .font(.title3)
+                        .foregroundStyle(.secondary)
+                    Text("No comments yet")
+                        .font(.subheadline.weight(.semibold))
+                    Text("Write notes under a hunk and they'll appear here.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .padding(12)
             } else {
                 List {
                     ForEach(Array(items.enumerated()), id: \.offset) { _, item in

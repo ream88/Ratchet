@@ -275,7 +275,7 @@ struct DiffHunkView: View {
     private var hunkNoteEditor: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
-                Label("Note for whole chunk", systemImage: "square.and.pencil")
+                Label("Note for whole hunk", systemImage: "square.and.pencil")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer()

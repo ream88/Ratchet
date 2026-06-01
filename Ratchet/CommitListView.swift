@@ -126,7 +126,7 @@ private struct CommitRow: View {
                 if isFullyReviewed {
                     Image(systemName: "checkmark.circle.fill")
                         .foregroundStyle(.green)
-                        .help("All chunks in this commit are reviewed")
+                        .help("All hunks in this commit are reviewed")
                 }
             }
             .font(.callout)
