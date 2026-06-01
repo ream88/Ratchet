@@ -52,39 +52,81 @@ struct DiffHunk: Identifiable {
     let header: String
     let oldStartLine: Int?
     let newStartLine: Int?
-    var lines: [DiffLine]
+    let lines: [DiffLine]
+
+    /// Each line as a +/-/space marker plus content. Computed once at init because it backs
+    /// both hashing and line-comment anchoring, which are read on hot rendering paths.
+    let markedLines: [String]
+
+    /// Stable identity for the chunk based on its *content*, not its line ranges. Computed
+    /// once at init — recomputing this SHA per access was a major source of lag on big diffs.
+    ///
+    /// The `@@ … @@` header is deliberately excluded because its line numbers shift whenever
+    /// unrelated edits land above the hunk: identical changes keep the same hash (review state
+    /// and comments persist), while a rewrite produces a new hash that must be reviewed again.
+    let contentHash: String
+
+    init(id: UUID, filePath: String, header: String,
+         oldStartLine: Int?, newStartLine: Int?, lines: [DiffLine]) {
+        self.id = id
+        self.filePath = filePath
+        self.header = header
+        self.oldStartLine = oldStartLine
+        self.newStartLine = newStartLine
+        self.lines = lines
+
+        let marked = lines.map { DiffHunk.marker(for: $0.kind) + $0.content }
+        self.markedLines = marked
+        self.contentHash = DiffHunk.hash(filePath: filePath, prefix: "\n", lines: marked)
+    }
 
     /// Reconstructs the raw unified-diff text for this hunk (used in exports).
     var rawText: String {
         var out = header
         for line in lines {
-            out += "\n" + marker(for: line.kind) + line.content
+            out += "\n" + DiffHunk.marker(for: line.kind) + line.content
         }
         return out
     }
 
-    /// Stable identity for the chunk based on its *content*, not its line ranges.
-    ///
-    /// The `@@ … @@` header is deliberately excluded because its line numbers shift
-    /// whenever unrelated edits land above the hunk. Hashing the file path plus the
-    /// marked body lines means: identical changes keep the same hash (review state and
-    /// comments persist), while a rewrite produces a new hash that must be reviewed again.
-    var contentHash: String {
-        var hasher = SHA256()
-        hasher.update(data: Data(filePath.utf8))
-        hasher.update(data: Data("\n".utf8))
-        for line in lines {
-            hasher.update(data: Data((marker(for: line.kind) + line.content + "\n").utf8))
-        }
-        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
+    /// Content-based identity for a comment anchored to a contiguous range of lines.
+    /// Like `contentHash`, this survives line-number shifts and changes when the lines do.
+    func lineCommentContentHash(forRange range: ClosedRange<Int>) -> String {
+        DiffHunk.hash(filePath: filePath, prefix: "\u{1}line\u{1}", lines: Array(markedLines[range]))
     }
 
-    private func marker(for kind: DiffLineKind) -> String {
+    /// The marked content of a line range — stored with a comment so it can be re-anchored later.
+    func anchorLines(forRange range: ClosedRange<Int>) -> [String] {
+        Array(markedLines[range])
+    }
+
+    /// Finds where a stored anchor's lines currently sit in this hunk, or nil if they no
+    /// longer match (i.e. the comment has resolved because the code changed).
+    func locate(anchorLines anchor: [String]) -> ClosedRange<Int>? {
+        guard !anchor.isEmpty, anchor.count <= markedLines.count else { return nil }
+        let lastStart = markedLines.count - anchor.count
+        for start in 0...lastStart where Array(markedLines[start..<start + anchor.count]) == anchor {
+            return start...(start + anchor.count - 1)
+        }
+        return nil
+    }
+
+    private static func marker(for kind: DiffLineKind) -> String {
         switch kind {
         case .context: return " "
         case .addition: return "+"
         case .deletion: return "-"
         }
+    }
+
+    private static func hash(filePath: String, prefix: String, lines: [String]) -> String {
+        var hasher = SHA256()
+        hasher.update(data: Data(filePath.utf8))
+        hasher.update(data: Data(prefix.utf8))
+        for line in lines {
+            hasher.update(data: Data((line + "\n").utf8))
+        }
+        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
     }
 }
 
@@ -109,6 +151,9 @@ struct ReviewComment: Codable, Identifiable {
     var hunkHeader: String
     var comment: String
     var isReviewed: Bool
+    /// For line-range comments: the marked content of the anchored lines, used to re-locate
+    /// the comment within a hunk. Nil for whole-chunk comments.
+    var anchorLines: [String]?
     var createdAt: Date
     var updatedAt: Date
 }

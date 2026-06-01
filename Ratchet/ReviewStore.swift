@@ -17,12 +17,28 @@ final class ReviewStore: ObservableObject {
     /// Records keyed by `repositoryPath + contentHash`.
     @Published private(set) var records: [String: ReviewComment] = [:]
 
+    /// Index of line-range comments by `repositoryPath + filePath`, so re-anchoring lookups
+    /// don't scan every record on hot paths (sidebar badges recompute per keystroke).
+    private var lineIndex: [String: [ReviewComment]] = [:]
+
     private let fileURL: URL
     private var saveWorkItem: DispatchWorkItem?
 
     init(fileURL: URL? = nil) {
         self.fileURL = fileURL ?? Self.defaultFileURL()
         load()
+        rebuildLineIndex()
+    }
+
+    private static func indexKey(_ repositoryPath: String, _ filePath: String) -> String {
+        repositoryPath + "\u{1}" + filePath
+    }
+
+    private func rebuildLineIndex() {
+        lineIndex = [:]
+        for record in records.values where record.anchorLines != nil {
+            lineIndex[Self.indexKey(record.repositoryPath, record.filePath), default: []].append(record)
+        }
     }
 
     // MARK: Keys
@@ -33,13 +49,15 @@ final class ReviewStore: ObservableObject {
         repositoryPath + "\u{1}" + contentHash
     }
 
-    /// Everything needed to locate and (re)create a record for a chunk.
+    /// Everything needed to locate and (re)create a record for a chunk or a line range.
     struct ReviewTarget {
         let repositoryPath: String
         let commitSHA: String
         let filePath: String
         let hunkHeader: String
         let contentHash: String
+        /// Non-nil for line-range comments; persisted so the comment can be re-anchored.
+        var anchorLines: [String]? = nil
 
         var key: String {
             ReviewStore.key(repositoryPath: repositoryPath, contentHash: contentHash)
@@ -54,6 +72,19 @@ final class ReviewStore: ObservableObject {
 
     func isReviewed(forKey key: String) -> Bool {
         records[key]?.isReviewed ?? false
+    }
+
+    /// All line-range comments recorded for a file, to be re-anchored against current hunks.
+    func lineComments(repositoryPath: String, filePath: String) -> [ReviewComment] {
+        lineIndex[Self.indexKey(repositoryPath, filePath)] ?? []
+    }
+
+    /// Every non-empty comment recorded for a repository, across all commits.
+    func allComments(repositoryPath: String) -> [ReviewComment] {
+        records.values.filter {
+            $0.repositoryPath == repositoryPath
+                && !$0.comment.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
     }
 
     // MARK: Mutation
@@ -82,6 +113,7 @@ final class ReviewStore: ObservableObject {
             hunkHeader: target.hunkHeader,
             comment: "",
             isReviewed: false,
+            anchorLines: target.anchorLines,
             createdAt: now,
             updatedAt: now
         )
@@ -97,7 +129,18 @@ final class ReviewStore: ObservableObject {
         } else {
             records[key] = record
         }
+        updateLineIndex(for: record, removed: !hasComment && !record.isReviewed)
         scheduleSave()
+    }
+
+    /// Keeps `lineIndex` current for a single line-comment record without rescanning all records.
+    private func updateLineIndex(for record: ReviewComment, removed: Bool) {
+        guard record.anchorLines != nil else { return }
+        let bucketKey = Self.indexKey(record.repositoryPath, record.filePath)
+        var bucket = lineIndex[bucketKey] ?? []
+        bucket.removeAll { $0.contentHash == record.contentHash }
+        if !removed { bucket.append(record) }
+        lineIndex[bucketKey] = bucket.isEmpty ? nil : bucket
     }
 
     // MARK: Persistence

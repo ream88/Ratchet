@@ -19,10 +19,25 @@ import Combine
 //   - Syntax highlighting inside diff hunks.
 //   - Toggle to show only commented / only uncommented hunks.
 
+/// Cached per-commit indicators for the sidebar.
+struct CommitBadge {
+    var fullyReviewed: Bool
+    var hasComments: Bool
+}
+
+/// Holds the sidebar's per-commit badges on a *separate* observable object so updating them
+/// (which happens on every comment keystroke) re-renders only the sidebar — not the diff view
+/// and its hunks, which observe `RepositoryDocument` itself.
+@MainActor
+final class CommitBadgeStore: ObservableObject {
+    @Published var badges: [String: CommitBadge] = [:]
+}
+
 @MainActor
 final class RepositoryDocument: ObservableObject {
     let repositoryURL: URL
     let store: ReviewStore
+    let badges = CommitBadgeStore()
 
     @Published var branches: [GitBranch] = []
     @Published var selectedBranchName: String?
@@ -35,9 +50,14 @@ final class RepositoryDocument: ObservableObject {
     @Published var errorMessage: String?
     @Published private(set) var isValidRepository = false
 
-    /// Content hashes of each loaded commit's chunks, cached as commits are opened so the
-    /// sidebar can show a "reviewed" badge without re-diffing every commit up front.
-    @Published private(set) var chunkHashesByCommit: [String: [String]] = [:]
+    /// Each loaded commit's parsed hunks, cached as commits are opened so the sidebar can
+    /// show review/comment badges without re-diffing every commit up front.
+    @Published private(set) var hunksByCommit: [String: [DiffHunk]] = [:]
+
+    /// Bumped whenever a chunk's reviewed flag changes. Hunk views watch this to re-sync
+    /// their local state after a file-level "mark all reviewed" — without re-rendering on
+    /// every comment keystroke (which would be costly for large diffs).
+    @Published private(set) var reviewedTick = 0
 
     private let git: GitService
 
@@ -109,7 +129,8 @@ final class RepositoryDocument: ObservableObject {
             // Keep only files with real content changes; binary files count even
             // though they have no textual hunks. This drops mode/metadata-only noise.
             diffFiles = DiffParser.parse(raw).filter { !$0.hunks.isEmpty || $0.isBinary }
-            chunkHashesByCommit[commit.id] = diffFiles.flatMap { $0.hunks.map(\.contentHash) }
+            hunksByCommit[commit.id] = diffFiles.flatMap(\.hunks)
+            updateBadge(forCommitID: commit.id)
         } catch {
             diffFiles = []
             errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
@@ -141,6 +162,7 @@ final class RepositoryDocument: ObservableObject {
     func setComment(_ text: String, for hunk: DiffHunk) {
         guard let target = reviewTarget(for: hunk) else { return }
         store.setText(text, for: target)
+        refreshSelectedCommitBadge()
     }
 
     func isReviewed(_ hunk: DiffHunk) -> Bool {
@@ -151,26 +173,101 @@ final class RepositoryDocument: ObservableObject {
     func setReviewed(_ reviewed: Bool, for hunk: DiffHunk) {
         guard let target = reviewTarget(for: hunk) else { return }
         store.setReviewed(reviewed, for: target)
+        reviewedTick += 1
+        refreshSelectedCommitBadge()
     }
 
-    /// Whether every chunk of a commit is reviewed. Returns nil when the commit's diff
-    /// hasn't been loaded yet (so the sidebar can stay quiet rather than guess).
-    func isFullyReviewed(_ commit: GitCommit) -> Bool? {
-        guard let hashes = chunkHashesByCommit[commit.id], !hashes.isEmpty else { return nil }
-        return hashes.allSatisfy {
-            store.isReviewed(forKey: ReviewStore.key(repositoryPath: repositoryPath, contentHash: $0))
+    /// Marks every chunk in a file reviewed (or not). Drives the sticky file header.
+    func setReviewed(_ reviewed: Bool, forFile file: DiffFile) {
+        for hunk in file.hunks {
+            guard let target = reviewTarget(for: hunk) else { continue }
+            store.setReviewed(reviewed, for: target)
         }
+        reviewedTick += 1
+        refreshSelectedCommitBadge()
     }
 
-    /// Whether a commit still carries comments on its current chunks. A comment auto-resolves
-    /// when the chunk it's attached to changes (new content hash), so any comment that still
-    /// matches a live chunk is considered unresolved. False until the commit's diff is loaded.
-    func hasUnresolvedComments(_ commit: GitCommit) -> Bool {
-        guard let hashes = chunkHashesByCommit[commit.id] else { return false }
-        return hashes.contains { hash in
-            let text = store.text(forKey: ReviewStore.key(repositoryPath: repositoryPath, contentHash: hash))
-            return !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    /// (reviewed, total) chunk counts for a file.
+    func reviewProgress(forFile file: DiffFile) -> (reviewed: Int, total: Int) {
+        (file.hunks.filter { isReviewed($0) }.count, file.hunks.count)
+    }
+
+    // MARK: Line-range comments
+
+    /// Line comments currently anchored within a hunk, paired with their live line range.
+    func lineComments(for hunk: DiffHunk) -> [(range: ClosedRange<Int>, record: ReviewComment)] {
+        store.lineComments(repositoryPath: repositoryPath, filePath: hunk.filePath)
+            .compactMap { record in
+                guard let anchor = record.anchorLines,
+                      let range = hunk.locate(anchorLines: anchor) else { return nil }
+                return (range, record)
+            }
+            .sorted { $0.range.lowerBound < $1.range.lowerBound }
+    }
+
+    /// Current text of the comment identified by a content hash (line or chunk).
+    func commentText(forContentHash hash: String) -> String {
+        store.text(forKey: ReviewStore.key(repositoryPath: repositoryPath, contentHash: hash))
+    }
+
+    /// Adds or updates a comment on a contiguous range of lines within a hunk.
+    func setLineComment(_ text: String, for hunk: DiffHunk, range: ClosedRange<Int>) {
+        guard let sha = selectedCommit?.id else { return }
+        let target = ReviewStore.ReviewTarget(
+            repositoryPath: repositoryPath,
+            commitSHA: sha,
+            filePath: hunk.filePath,
+            hunkHeader: hunk.header,
+            contentHash: hunk.lineCommentContentHash(forRange: range),
+            anchorLines: hunk.anchorLines(forRange: range)
+        )
+        store.setText(text, for: target)
+        refreshSelectedCommitBadge()
+    }
+
+    /// Updates or clears (empty text) an existing line comment, identified by its record.
+    func updateLineComment(_ text: String, record: ReviewComment, hunk: DiffHunk) {
+        guard let sha = selectedCommit?.id else { return }
+        let target = ReviewStore.ReviewTarget(
+            repositoryPath: repositoryPath,
+            commitSHA: sha,
+            filePath: record.filePath,
+            hunkHeader: hunk.header,
+            contentHash: record.contentHash,
+            anchorLines: record.anchorLines
+        )
+        store.setText(text, for: target)
+        refreshSelectedCommitBadge()
+    }
+
+    // MARK: Sidebar badges
+
+    /// Recomputes the cached badge for a commit. Called only when that commit's review or
+    /// comment state changes — never on a blanket per-keystroke sidebar re-render.
+    func updateBadge(forCommitID id: String) {
+        badges.badges[id] = computeBadge(forCommitID: id)
+    }
+
+    private func refreshSelectedCommitBadge() {
+        if let id = selectedCommit?.id { updateBadge(forCommitID: id) }
+    }
+
+    /// nil until the commit's diff is loaded, so the sidebar stays quiet rather than guessing.
+    private func computeBadge(forCommitID id: String) -> CommitBadge? {
+        guard let hunks = hunksByCommit[id], !hunks.isEmpty else { return nil }
+        let fullyReviewed = hunks.allSatisfy {
+            store.isReviewed(forKey: ReviewStore.key(repositoryPath: repositoryPath, contentHash: $0.contentHash))
         }
+        // A comment auto-resolves when the lines it's anchored to change, so any comment still
+        // matching a live chunk counts. (Hashes are precomputed; line lookups are indexed.)
+        let hasComments = hunks.contains { hunk in
+            let key = ReviewStore.key(repositoryPath: repositoryPath, contentHash: hunk.contentHash)
+            if !store.text(forKey: key).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return true
+            }
+            return !lineComments(for: hunk).isEmpty
+        }
+        return CommitBadge(fullyReviewed: fullyReviewed, hasComments: hasComments)
     }
 
     // MARK: Export
@@ -185,5 +282,20 @@ final class RepositoryDocument: ObservableObject {
             store: store
         )
         ExportService.save(markdown: markdown, suggestedName: "review-\(commit.shortSHA).md")
+    }
+
+    /// Exports every comment across all commits in the repository into a single Markdown file.
+    func exportAllComments() {
+        let markdown = ExportService.markdownForAllComments(
+            repositoryPath: repositoryPath,
+            commits: commits,
+            store: store
+        )
+        ExportService.save(markdown: markdown, suggestedName: "\(repositoryName)-review-comments.md")
+    }
+
+    /// Whether any comment exists for this repository (drives the "Export All" enabled state).
+    var hasAnyComments: Bool {
+        !store.allComments(repositoryPath: repositoryPath).isEmpty
     }
 }
