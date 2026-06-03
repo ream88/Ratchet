@@ -207,6 +207,7 @@ private struct CommitHeaderView: View {
                     Label(branch, systemImage: "arrow.triangle.branch")
                         .font(.caption)
                 }
+                DiffStatView(additions: commit.additions, deletions: commit.deletions)
             }
             .foregroundStyle(.secondary)
         }

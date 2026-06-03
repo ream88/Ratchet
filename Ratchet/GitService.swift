@@ -80,10 +80,12 @@ struct GitService {
     /// Commits reachable from `branch`, newest first. Capped for responsiveness on large repos.
     /// TODO: paginate / load more on scroll instead of a fixed cap.
     nonisolated func commits(branch: String, limit: Int = 300) async throws -> [GitCommit] {
-        // Unit separator (US, 0x1f) between fields; record separator (RS, 0x1e) between commits.
-        let format = "%H%x1f%h%x1f%s%x1f%an%x1f%aI%x1e"
+        // Leading record separator (RS, 0x1e) so each record is the field line followed by
+        // its --numstat rows; unit separator (US, 0x1f) between fields.
+        let format = "%x1e%H%x1f%h%x1f%s%x1f%an%x1f%aI"
         let output = try await run([
             "log", branch,
+            "--numstat",
             "--pretty=format:\(format)",
             "-n", String(limit),
         ])
@@ -93,14 +95,28 @@ struct GitService {
         for record in output.components(separatedBy: "\u{1e}") {
             let trimmed = record.trimmingCharacters(in: .whitespacesAndNewlines)
             if trimmed.isEmpty { continue }
-            let fields = trimmed.components(separatedBy: "\u{1f}")
+            let recordLines = trimmed.components(separatedBy: "\n")
+            let fields = recordLines[0].components(separatedBy: "\u{1f}")
             guard fields.count == 5 else { continue }
+
+            // Sum the per-file "added\tremoved\tpath" --numstat rows. Binary files report "-",
+            // which parses to 0 and so contributes nothing to the totals.
+            var additions = 0, deletions = 0
+            for statLine in recordLines.dropFirst() {
+                let columns = statLine.components(separatedBy: "\t")
+                guard columns.count >= 2 else { continue }
+                additions += Int(columns[0]) ?? 0
+                deletions += Int(columns[1]) ?? 0
+            }
+
             commits.append(GitCommit(
                 id: fields[0],
                 shortSHA: fields[1],
                 title: fields[2],
                 author: fields[3],
-                date: formatter.date(from: fields[4])
+                date: formatter.date(from: fields[4]),
+                additions: additions,
+                deletions: deletions
             ))
         }
         return commits

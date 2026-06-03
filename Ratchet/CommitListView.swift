@@ -116,6 +116,7 @@ private struct CommitRow: View {
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
+                DiffStatView(additions: commit.additions, deletions: commit.deletions)
                 if let date = commit.date {
                     Text(date, format: .dateTime.year().month().day().hour().minute())
                         .font(.caption2)

@@ -137,6 +137,8 @@ struct DiffHunkView: View {
                 .lineLimit(1)
                 .truncationMode(.middle)
 
+            DiffStatView(additions: hunk.additions, deletions: hunk.deletions)
+
             if hasAnyComment {
                 Image(systemName: "text.bubble.fill")
                     .font(.caption2)

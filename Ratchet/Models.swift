@@ -28,6 +28,8 @@ struct GitCommit: Identifiable, Hashable {
     let title: String
     let author: String
     let date: Date?
+    let additions: Int
+    let deletions: Int
 }
 
 // MARK: - Diff
@@ -54,6 +56,10 @@ struct DiffHunk: Identifiable {
     let newStartLine: Int?
     let lines: [DiffLine]
 
+    /// Added/removed line counts, tallied once at init for the chunk's diff-stat badge.
+    let additions: Int
+    let deletions: Int
+
     /// Each line as a +/-/space marker plus content. Computed once at init because it backs
     /// both hashing and line-comment anchoring, which are read on hot rendering paths.
     let markedLines: [String]
@@ -75,8 +81,18 @@ struct DiffHunk: Identifiable {
         self.newStartLine = newStartLine
         self.lines = lines
 
-        let marked = lines.map { DiffHunk.marker(for: $0.kind) + $0.content }
+        var adds = 0, dels = 0
+        let marked = lines.map { line -> String in
+            switch line.kind {
+            case .addition: adds += 1
+            case .deletion: dels += 1
+            case .context: break
+            }
+            return DiffHunk.marker(for: line.kind) + line.content
+        }
         self.markedLines = marked
+        self.additions = adds
+        self.deletions = dels
         self.contentHash = DiffHunk.hash(filePath: filePath, prefix: "\n", lines: marked)
     }
 
