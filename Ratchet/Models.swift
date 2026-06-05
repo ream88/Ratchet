@@ -23,13 +23,30 @@ struct GitBranch: Identifiable, Hashable {
 }
 
 struct GitCommit: Identifiable, Hashable {
-    let id: String          // full SHA
+    let id: String          // full SHA, or `uncommittedID` for the working-tree entry
     let shortSHA: String
     let title: String
     let author: String
     let date: Date?
     let additions: Int
     let deletions: Int
+
+    /// Sentinel `id` for the synthetic "Uncommitted changes" entry pinned atop the list.
+    static let uncommittedID = "ratchet://uncommitted"
+
+    /// Whether this is the working-tree pseudo-commit rather than a real git commit.
+    var isUncommitted: Bool { id == Self.uncommittedID }
+
+    /// The working-tree pseudo-commit (changes against HEAD), shown at the top of the list.
+    static func uncommitted(additions: Int, deletions: Int) -> GitCommit {
+        GitCommit(id: uncommittedID, shortSHA: "", title: "Uncommitted changes",
+                  author: "", date: nil, additions: additions, deletions: deletions)
+    }
+
+    // A commit is its SHA: two snapshots of the working tree (with different stats) are still
+    // the same entry, so sidebar selection survives a refresh that changed the line counts.
+    static func == (lhs: GitCommit, rhs: GitCommit) -> Bool { lhs.id == rhs.id }
+    func hash(into hasher: inout Hasher) { hasher.combine(id) }
 }
 
 // MARK: - Diff

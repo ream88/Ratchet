@@ -59,6 +59,10 @@ final class RepositoryDocument: ObservableObject {
     @Published var errorMessage: String?
     @Published private(set) var isValidRepository = false
 
+    /// The actually checked-out branch (HEAD), regardless of the sidebar selection. The
+    /// uncommitted-changes entry only applies here, since it diffs against HEAD.
+    private var currentBranchName: String?
+
     /// The base branch the selected branch is compared against (e.g. `main`), if found.
     @Published private(set) var baseBranchName: String?
 
@@ -119,6 +123,7 @@ final class RepositoryDocument: ObservableObject {
             let (loadedBranches, current) = try await (branchesTask, currentTask)
 
             branches = loadedBranches
+            currentBranchName = current
             // Prefer the checked-out branch, then a branch flagged current, then the first.
             let initial = current
                 ?? loadedBranches.first(where: { $0.isCurrent })?.name
@@ -141,7 +146,10 @@ final class RepositoryDocument: ObservableObject {
         if let loaded = try? await git.branches() { branches = loaded }
         if let branch = selectedBranchName {
             await loadCommits(branch: branch)
-            if let selected = selectedCommit, !commits.contains(selected) {
+            if let selected = selectedCommit, let fresh = commits.first(where: { $0 == selected }) {
+                // Re-open the working tree so its diff and line counts reflect any new edits.
+                if fresh.isUncommitted { await selectCommit(fresh) }
+            } else {
                 selectedCommit = nil
                 diffFiles = []
             }
@@ -161,13 +169,26 @@ final class RepositoryDocument: ObservableObject {
         errorMessage = nil
         defer { isLoadingCommits = false }
         do {
-            commits = try await git.commits(branch: branch)
+            var loaded = try await git.commits(branch: branch)
+            // Pin uncommitted changes atop the current branch's list (they diff against HEAD,
+            // so they only make sense there — not when viewing some other branch).
+            if branch == currentBranchName, let wip = try? await uncommittedCommit() {
+                loaded.insert(wip, at: 0)
+            }
+            commits = loaded
             mcpServer.currentBranchCommits = commits
             await loadAheadOfBase(branch: branch)
         } catch {
             commits = []
             errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }
+    }
+
+    /// The working-tree pseudo-commit, or nil when the tree is clean (nothing to review).
+    private func uncommittedCommit() async throws -> GitCommit? {
+        let stats = try await git.workingTreeStats()
+        guard stats.additions > 0 || stats.deletions > 0 else { return nil }
+        return .uncommitted(additions: stats.additions, deletions: stats.deletions)
     }
 
     /// Computes which of the branch's commits aren't yet in the base branch (e.g. `main`).
@@ -200,7 +221,9 @@ final class RepositoryDocument: ObservableObject {
         errorMessage = nil
         defer { isLoadingDiff = false }
         do {
-            let raw = try await git.diff(forCommit: commit.id)
+            let raw = commit.isUncommitted
+                ? try await git.diffWorkingTree()
+                : try await git.diff(forCommit: commit.id)
             // Keep only files with real content changes; binary files count even
             // though they have no textual hunks. This drops mode/metadata-only noise.
             diffFiles = DiffParser.parse(raw).filter { !$0.hunks.isEmpty || $0.isBinary }
@@ -456,8 +479,13 @@ final class RepositoryDocument: ObservableObject {
 
     /// Returns a commit's hunks from cache, parsing its diff on demand.
     private func hunks(forCommit commit: GitCommit) async -> [DiffHunk] {
-        if let cached = hunksByCommit[commit.id] { return cached }
-        guard let raw = try? await git.diff(forCommit: commit.id) else { return [] }
+        // The working tree is volatile, so always re-diff it rather than trusting the cache
+        // (we still store the fresh result below so badge computation can read it).
+        if !commit.isUncommitted, let cached = hunksByCommit[commit.id] { return cached }
+        let diff = commit.isUncommitted
+            ? try? await git.diffWorkingTree()
+            : try? await git.diff(forCommit: commit.id)
+        guard let raw = diff else { return [] }
         let hunks = DiffParser.parse(raw).filter { !$0.hunks.isEmpty || $0.isBinary }.flatMap(\.hunks)
         hunksByCommit[commit.id] = hunks
         return hunks

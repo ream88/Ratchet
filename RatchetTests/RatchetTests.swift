@@ -160,4 +160,27 @@ struct RatchetTests {
         #expect(doc.commentText(for: h2) == "rename leftover")
         #expect(doc.commentText(for: h3) == "keep me")
     }
+
+    // MARK: Uncommitted changes entry
+
+    @Test func uncommittedCommitIsIdentifiedAndCarriesStats() {
+        let wip = GitCommit.uncommitted(additions: 12, deletions: 3)
+        #expect(wip.isUncommitted)
+        #expect(wip.id == GitCommit.uncommittedID)
+        #expect(wip.additions == 12)
+        #expect(wip.deletions == 3)
+
+        let real = GitCommit(id: "abc123", shortSHA: "abc123", title: "t",
+                             author: "a", date: nil, additions: 0, deletions: 0)
+        #expect(!real.isUncommitted)
+    }
+
+    @Test func commitIdentityIgnoresStatsSoSelectionSurvivesRefresh() {
+        // Two working-tree snapshots with different line counts are the same entry, so the
+        // sidebar selection (compared by Equatable) persists across a refresh.
+        let before = GitCommit.uncommitted(additions: 1, deletions: 0)
+        let after = GitCommit.uncommitted(additions: 9, deletions: 4)
+        #expect(before == after)
+        #expect([before].contains(after))
+    }
 }

@@ -239,10 +239,12 @@ private struct CommitHeaderView: View {
             Text(commit.title)
                 .font(.title3.bold())
             HStack(spacing: 8) {
-                Label(commit.shortSHA, systemImage: "number")
-                    .font(.system(.caption, design: .monospaced))
-                Label(commit.author, systemImage: "person")
-                    .font(.caption)
+                if !commit.isUncommitted {
+                    Label(commit.shortSHA, systemImage: "number")
+                        .font(.system(.caption, design: .monospaced))
+                    Label(commit.author, systemImage: "person")
+                        .font(.caption)
+                }
                 if let branch {
                     Label(branch, systemImage: "arrow.triangle.branch")
                         .font(.caption)

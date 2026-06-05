@@ -46,7 +46,9 @@ struct CommitListView: View {
                     ForEach(document.commits) { commit in
                         let badge = badges.badges[commit.id]
                         // Dim commits already in the base branch so the unmerged ones stand out.
-                        let merged = document.baseBranchName != nil
+                        // The working-tree entry is never "merged".
+                        let merged = !commit.isUncommitted
+                            && document.baseBranchName != nil
                             && !document.commitsAheadOfBase.contains(commit.id)
                         CommitRow(
                             commit: commit,
@@ -65,10 +67,12 @@ struct CommitListView: View {
                                 Task { await document.copyComments(for: commit) }
                             }
                             .keyboardShortcut("c", modifiers: .command)
-                            Button("Copy SHA") {
-                                document.copySHA(commit)
+                            if !commit.isUncommitted {
+                                Button("Copy SHA") {
+                                    document.copySHA(commit)
+                                }
+                                .keyboardShortcut("c", modifiers: [.command, .option])
                             }
-                            .keyboardShortcut("c", modifiers: [.command, .option])
                         }
                     }
                 }
@@ -102,19 +106,27 @@ private struct CommitRow: View {
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
             VStack(alignment: .leading, spacing: 4) {
-                Text(commit.title)
-                    .lineLimit(2)
-                    .font(.callout.weight(.medium))
-                HStack(spacing: 6) {
-                    Text(commit.shortSHA)
-                        .font(.system(.caption, design: .monospaced))
-                        .foregroundStyle(.secondary)
-                    Text("·")
-                        .foregroundStyle(.secondary)
-                    Text(commit.author)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                HStack(spacing: 5) {
+                    if commit.isUncommitted {
+                        Image(systemName: "pencil.line")
+                            .foregroundStyle(.secondary)
+                    }
+                    Text(commit.title)
+                        .lineLimit(2)
+                        .font(.callout.weight(.medium))
+                }
+                if !commit.isUncommitted {
+                    HStack(spacing: 6) {
+                        Text(commit.shortSHA)
+                            .font(.system(.caption, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                        Text("·")
+                            .foregroundStyle(.secondary)
+                        Text(commit.author)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
                 }
                 DiffStatView(additions: commit.additions, deletions: commit.deletions)
                 if let date = commit.date {

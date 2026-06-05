@@ -134,6 +134,29 @@ struct GitService {
         ])
     }
 
+    /// The raw unified diff of the working tree against HEAD — every uncommitted change to a
+    /// tracked file (staged or not), with no commit header. Untracked files aren't included.
+    nonisolated func diffWorkingTree(contextLines: Int = 3) async throws -> String {
+        return try await run([
+            "diff", "HEAD",
+            "--unified=\(contextLines)",
+            "--no-color",
+        ])
+    }
+
+    /// Added/removed line totals for the uncommitted changes against HEAD; (0, 0) is a clean tree.
+    nonisolated func workingTreeStats() async throws -> (additions: Int, deletions: Int) {
+        let output = try await run(["diff", "HEAD", "--numstat"])
+        var additions = 0, deletions = 0
+        for statLine in output.split(separator: "\n", omittingEmptySubsequences: true) {
+            let columns = statLine.components(separatedBy: "\t")
+            guard columns.count >= 2 else { continue }
+            additions += Int(columns[0]) ?? 0
+            deletions += Int(columns[1]) ?? 0
+        }
+        return (additions, deletions)
+    }
+
     // MARK: Process plumbing
 
     private nonisolated func run(_ arguments: [String]) async throws -> String {
