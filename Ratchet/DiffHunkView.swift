@@ -73,12 +73,17 @@ struct DiffHunkView: View {
             refreshLineComments()
         }
         .onChange(of: document.reviewedTick) {
-            // A file-level "mark all reviewed" may have changed this chunk; re-sync.
+            // A file-level "mark all reviewed" or a batch "apply to all" may have changed this
+            // chunk's reviewed flag and/or note; re-sync. Fires only on discrete review/batch
+            // events (never on keystrokes), so re-reading the store here stays cheap.
             let reviewedNow = document.isReviewed(hunk)
             if reviewedNow != isReviewed {
                 isReviewed = reviewedNow
                 withAnimation(.easeInOut(duration: 0.15)) { isExpanded = !reviewedNow }
             }
+            let textNow = document.commentText(for: hunk)
+            if textNow != commentText { commentText = textNow }
+            refreshLineComments()
         }
     }
 
@@ -152,7 +157,11 @@ struct DiffHunkView: View {
                 get: { isReviewed },
                 set: { newValue in
                     isReviewed = newValue
-                    document.setReviewed(newValue, for: hunk)
+                    if newValue {
+                        document.markReviewed(hunk)
+                    } else {
+                        document.setReviewed(false, for: hunk)
+                    }
                     withAnimation(.easeInOut(duration: 0.15)) { isExpanded = !newValue }
                 }
             )) {
@@ -265,7 +274,11 @@ struct DiffHunkView: View {
                 HStack {
                     Text("Note for whole hunk").font(.caption).foregroundStyle(.secondary)
                     Spacer()
-                    Button("Done") { isEditingNote = false }.controlSize(.small)
+                    Button("Done") {
+                        isEditingNote = false
+                        document.suggestCommentPropagation(from: hunk)
+                    }
+                    .controlSize(.small)
                 }
                 TextEditor(text: $commentText)
                     .font(.body)

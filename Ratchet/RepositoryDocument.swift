@@ -28,6 +28,19 @@ final class CommitBadgeStore: ObservableObject {
     @Published var badges: [String: CommitBadge] = [:]
 }
 
+/// A pending offer to apply a just-made review action to every identical hunk in the commit.
+struct BatchSuggestion: Identifiable {
+    enum Kind {
+        case review
+        case comment(String)
+    }
+
+    let id = UUID()
+    let kind: Kind
+    let targets: [DiffHunk]
+    var count: Int { targets.count }
+}
+
 @MainActor
 final class RepositoryDocument: ObservableObject {
     let repositoryURL: URL
@@ -60,6 +73,14 @@ final class RepositoryDocument: ObservableObject {
     /// their local state after a file-level "mark all reviewed" — without re-rendering on
     /// every comment keystroke (which would be costly for large diffs).
     @Published private(set) var reviewedTick = 0
+
+    /// A pending "the same change appears N more times — apply to all?" prompt, raised when
+    /// the user reviews or notes a hunk that has identical siblings elsewhere in this commit.
+    @Published var batchSuggestion: BatchSuggestion?
+
+    /// Signatures the user answered "Just this one" for — suppresses re-asking for the same
+    /// change within the current commit. Cleared when a different commit is selected.
+    private var dismissedSignatures: Set<String> = []
 
     private let git: GitService
 
@@ -173,6 +194,8 @@ final class RepositoryDocument: ObservableObject {
     func selectCommit(_ commit: GitCommit) async {
         selectedCommit = commit
         diffFiles = []
+        batchSuggestion = nil
+        dismissedSignatures = []
         isLoadingDiff = true
         errorMessage = nil
         defer { isLoadingDiff = false }
@@ -242,6 +265,64 @@ final class RepositoryDocument: ObservableObject {
     /// (reviewed, total) chunk counts for a file.
     func reviewProgress(forFile file: DiffFile) -> (reviewed: Int, total: Int) {
         (file.hunks.filter { isReviewed($0) }.count, file.hunks.count)
+    }
+
+    // MARK: Batch suggestions ("same change, N more times")
+
+    /// Hunks elsewhere in the current commit's diff whose *change* matches `hunk` (ignoring the
+    /// file path, so a rename hits every file), excluding `hunk` itself.
+    private func identicalHunks(to hunk: DiffHunk) -> [DiffHunk] {
+        diffFiles.flatMap(\.hunks).filter {
+            $0.id != hunk.id && $0.contentSignature == hunk.contentSignature
+        }
+    }
+
+    /// Marks a hunk reviewed from its toggle and, if the same change appears in other
+    /// not-yet-reviewed hunks, offers to mark them all.
+    func markReviewed(_ hunk: DiffHunk) {
+        setReviewed(true, for: hunk)
+        guard !dismissedSignatures.contains(hunk.contentSignature) else { return }
+        let pending = identicalHunks(to: hunk).filter { !isReviewed($0) }
+        if !pending.isEmpty {
+            batchSuggestion = BatchSuggestion(kind: .review, targets: pending)
+        }
+    }
+
+    /// Called when a whole-hunk note finishes editing; offers to copy it to identical hunks
+    /// that have no note yet (never clobbering a different one).
+    func suggestCommentPropagation(from hunk: DiffHunk) {
+        guard !dismissedSignatures.contains(hunk.contentSignature) else { return }
+        let text = commentText(for: hunk).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        let pending = identicalHunks(to: hunk).filter {
+            commentText(for: $0).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+        if !pending.isEmpty {
+            batchSuggestion = BatchSuggestion(kind: .comment(text), targets: pending)
+        }
+    }
+
+    /// Applies the pending suggestion to every target, then dismisses it.
+    func applyBatchSuggestion() {
+        guard let suggestion = batchSuggestion else { return }
+        for hunk in suggestion.targets {
+            guard let target = reviewTarget(for: hunk) else { continue }
+            switch suggestion.kind {
+            case .review: store.setReviewed(true, for: target)
+            case .comment(let text): store.setText(text, for: target)
+            }
+        }
+        reviewedTick += 1
+        refreshSelectedCommitBadge()
+        batchSuggestion = nil
+    }
+
+    /// Dismisses the pending suggestion and remembers its change so we don't re-ask this commit.
+    func dismissBatchSuggestion() {
+        for hunk in batchSuggestion?.targets ?? [] {
+            dismissedSignatures.insert(hunk.contentSignature)
+        }
+        batchSuggestion = nil
     }
 
     // MARK: Line-range comments

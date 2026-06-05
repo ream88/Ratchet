@@ -33,6 +33,19 @@ struct DiffReviewView: View {
                 diffContent
             }
         }
+        .confirmationDialog(
+            batchTitle,
+            isPresented: Binding(
+                get: { document.batchSuggestion != nil },
+                set: { if !$0 { document.dismissBatchSuggestion() } }
+            ),
+            presenting: document.batchSuggestion
+        ) { suggestion in
+            Button(batchApplyLabel(suggestion)) { document.applyBatchSuggestion() }
+            Button("Just This One", role: .cancel) { document.dismissBatchSuggestion() }
+        } message: { suggestion in
+            Text(batchMessage(suggestion))
+        }
         .toolbar {
             ToolbarItem(placement: .navigation) { branchMenu }
 
@@ -73,6 +86,33 @@ struct DiffReviewView: View {
         .inspector(isPresented: $showSummary) {
             CommentSummaryView(document: document)
                 .inspectorColumnWidth(min: 260, ideal: 320, max: 480)
+        }
+    }
+
+    // MARK: Batch suggestion dialog
+
+    private var batchTitle: String {
+        switch document.batchSuggestion?.kind {
+        case .comment: return "Add this note to identical changes?"
+        case .review, .none: return "Mark identical changes as reviewed?"
+        }
+    }
+
+    private func batchApplyLabel(_ suggestion: BatchSuggestion) -> String {
+        switch suggestion.kind {
+        case .review: return "Mark \(suggestion.count) More Reviewed"
+        case .comment: return "Add to \(suggestion.count) More"
+        }
+    }
+
+    private func batchMessage(_ suggestion: BatchSuggestion) -> String {
+        let n = suggestion.count
+        let hunks = n == 1 ? "hunk" : "hunks"
+        switch suggestion.kind {
+        case .review:
+            return "The same change appears in \(n) other \(hunks). Mark them all reviewed too?"
+        case .comment:
+            return "The same change appears in \(n) other un-noted \(hunks). Add your note to them too?"
         }
     }
 

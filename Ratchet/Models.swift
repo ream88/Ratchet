@@ -72,6 +72,13 @@ struct DiffHunk: Identifiable {
     /// and comments persist), while a rewrite produces a new hash that must be reviewed again.
     let contentHash: String
 
+    /// Path-independent identity of the *change itself* — the added/removed lines only, ignoring
+    /// the file path and the surrounding context lines. The same edit (e.g. a module rename) in
+    /// differently-surrounded files produces the same signature, which powers "apply to all
+    /// identical hunks" suggestions. Distinct from `contentHash`, which folds in the file path
+    /// *and* context and keys persisted per-file review state.
+    let contentSignature: String
+
     init(id: UUID, filePath: String, header: String,
          oldStartLine: Int?, newStartLine: Int?, lines: [DiffLine]) {
         self.id = id
@@ -82,18 +89,23 @@ struct DiffHunk: Identifiable {
         self.lines = lines
 
         var adds = 0, dels = 0
+        // The change-only lines (no context) back `contentSignature`: the same edit in two
+        // files sits in different surrounding code, so context must be excluded for them to match.
+        var changed: [String] = []
         let marked = lines.map { line -> String in
+            let m = DiffHunk.marker(for: line.kind) + line.content
             switch line.kind {
-            case .addition: adds += 1
-            case .deletion: dels += 1
+            case .addition: adds += 1; changed.append(m)
+            case .deletion: dels += 1; changed.append(m)
             case .context: break
             }
-            return DiffHunk.marker(for: line.kind) + line.content
+            return m
         }
         self.markedLines = marked
         self.additions = adds
         self.deletions = dels
         self.contentHash = DiffHunk.hash(filePath: filePath, prefix: "\n", lines: marked)
+        self.contentSignature = DiffHunk.hash(filePath: "", prefix: "\u{2}dup\u{2}", lines: changed)
     }
 
     /// Reconstructs the raw unified-diff text for this hunk (used in exports).
